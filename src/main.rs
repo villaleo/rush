@@ -4,11 +4,13 @@ use std::io::{self, BufRead, Write};
 mod util;
 
 fn main() {
-    print!("$ ");
-    io::stdout().flush().unwrap();
+    loop {
+        print!("$ ");
+        io::stdout().flush().unwrap();
 
-    let stdin = io::stdin().lock();
-    let _ = find_command(&read_command(stdin));
+        let stdin = io::stdin().lock();
+        let _ = find_command(&read_command(stdin));
+    }
 }
 
 fn read_command<R: BufRead>(reader: R) -> String {
