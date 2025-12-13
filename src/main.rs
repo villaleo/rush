@@ -9,6 +9,7 @@ fn main() {
         io::stdout().flush().unwrap();
 
         let stdin = io::stdin().lock();
-        let _ = find_command(&read_command(stdin));
+        let cmd = read_command(stdin);
+        let _ = find_command(&cmd.name);
     }
 }
