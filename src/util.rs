@@ -2,13 +2,13 @@ use std::io::{self, BufRead};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandType {
+    Exit,
     Unknown,
 }
 
 pub struct Command {
-    #[allow(dead_code)]
     pub type_: CommandType,
-    pub name: String,
+    pub cmd_str: String,
 }
 
 pub fn process_input<R: BufRead>(mut reader: R) -> io::Result<String> {
@@ -18,19 +18,32 @@ pub fn process_input<R: BufRead>(mut reader: R) -> io::Result<String> {
     Ok(input.trim().into())
 }
 
-pub fn read_command<R: BufRead>(reader: R) -> Command {
-    match process_input(reader) {
-        Ok(input) => Command {
-            type_: CommandType::Unknown,
-            name: input,
+pub fn read_command<R: BufRead>(reader: R) -> anyhow::Result<Command> {
+    let cmd = match process_input(reader) {
+        Ok(cmd_line) => match find_command(&cmd_line) {
+            Some(cmd) => cmd,
+            None => {
+                return Ok(Command {
+                    type_: CommandType::Unknown,
+                    cmd_str: cmd_line,
+                });
+            }
         },
         Err(_) => unreachable!(),
-    }
+    };
+
+    Ok(cmd)
 }
 
-pub fn find_command(name: &str) -> Option<Command> {
+fn find_command(name: &str) -> Option<Command> {
+    if name.trim() == "exit" {
+        return Some(Command {
+            type_: CommandType::Exit,
+            cmd_str: name.trim().into(),
+        });
+    }
+
     // All commands are unknown for now
-    println!("{name}: command not found");
     None
 }
 
@@ -39,13 +52,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn should_exit_on_find_exit_cmd() {
+        let input = "exit";
+        let cmd = find_command(input);
+
+        assert!(cmd.as_ref().is_some());
+        assert_eq!(cmd.as_ref().unwrap().cmd_str, input);
+        assert_eq!(cmd.as_ref().unwrap().type_, CommandType::Exit);
+    }
+
+    #[test]
     fn should_read_command() {
         let input = "go";
         let reader = io::Cursor::new(input);
         let cmd = read_command(reader);
 
-        assert_eq!(input, cmd.name);
-        assert_eq!(CommandType::Unknown, cmd.type_);
+        assert!(&cmd.is_ok());
+        assert_eq!(CommandType::Unknown, cmd.as_ref().unwrap().type_);
+        assert_eq!(input, cmd.as_ref().unwrap().cmd_str);
     }
 
     #[test]
