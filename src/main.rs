@@ -12,7 +12,9 @@ fn main() {
         let cmd = read_command(stdin).unwrap();
         match cmd.type_ {
             util::CommandType::Exit => break,
-            util::CommandType::Unknown => println!("{}: unknown command", cmd.cmd_str),
+            util::CommandType::Unknown => {
+                println!("{}: command not found", cmd.cmd_str)
+            }
         }
     }
 }
