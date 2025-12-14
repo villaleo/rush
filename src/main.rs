@@ -1,20 +1,22 @@
-use crate::util::Command;
+use crate::util::{Command, CommandType};
 use std::io::{self, Write};
 
 mod util;
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     loop {
         print!("$ ");
-        io::stdout().flush().unwrap();
+        io::stdout().flush()?;
 
         let stdin = io::stdin().lock();
-        let cmd = Command::new(stdin).unwrap();
-        match cmd.type_ {
-            util::CommandType::Exit => break,
-            util::CommandType::Unknown => {
-                println!("{}: command not found", cmd.cmd_str)
-            }
+        let cmd = Command::new(stdin)?;
+
+        if let CommandType::Exit = cmd.type_ {
+            return Ok(());
+        }
+
+        if let Err(error) = cmd.run() {
+            println!("{error}")
         }
     }
 }
