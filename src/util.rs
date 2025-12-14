@@ -1,7 +1,6 @@
 use std::io::BufRead;
 use std::vec::Vec;
 
-use anyhow::bail;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -12,65 +11,7 @@ pub enum RushError {
     UnexpectedEOF,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum CommandType {
-    Echo,
-    Exit,
-    Unknown,
-}
-
-pub struct Command {
-    pub name: String,
-    pub type_: CommandType,
-    pub args: Vec<String>,
-}
-
-impl Command {
-    pub fn new<R: BufRead>(reader: R) -> anyhow::Result<Command> {
-        let args = process_input(reader)?;
-        let name = args.first().unwrap().to_string();
-        let type_ = Self::find_type(&name);
-
-        Ok(Command { name, type_, args })
-    }
-
-    pub fn find_type(name: &str) -> CommandType {
-        match name.trim() {
-            "exit" => CommandType::Exit,
-            "echo" => CommandType::Echo,
-            _ => CommandType::Unknown,
-        }
-    }
-
-    pub fn run(&self) -> anyhow::Result<()> {
-        match self.type_ {
-            CommandType::Echo => {
-                // Skip the first argument (command name)
-                let args = &self.args[1..];
-
-                if let Some((last, args)) = args.split_last() {
-                    println!("{} {}", args.join(" "), last);
-                }
-
-                Ok(())
-            }
-            CommandType::Exit => Ok(()),
-            CommandType::Unknown => bail!(RushError::CommandNotFound(self.name.to_owned())),
-        }
-    }
-}
-
-impl std::fmt::Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.type_ {
-            CommandType::Echo => write!(f, "echo"),
-            CommandType::Exit => write!(f, "exit"),
-            CommandType::Unknown => write!(f, "{}", self.name),
-        }
-    }
-}
-
-fn process_input<R: BufRead>(mut reader: R) -> anyhow::Result<Vec<String>> {
+pub(crate) fn process_input<R: BufRead>(mut reader: R) -> anyhow::Result<Vec<String>> {
     let mut input = String::new();
     reader
         .read_line(&mut input)
@@ -92,38 +33,50 @@ mod tests {
     use std::io::{self};
 
     #[test]
-    fn should_exit_on_find_exit_cmd() {
-        let input = "exit";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader);
+    fn process_input_parses_tokens() {
+        let input = io::Cursor::new("echo hello world\n");
+        let tokens = process_input(input).unwrap();
+        let tokens = tokens.iter().map(String::as_str).collect::<Vec<_>>();
 
-        assert!(cmd.as_ref().is_ok());
-        assert!(matches!(cmd.as_ref().unwrap().type_, CommandType::Exit));
-        assert!(
-            cmd.as_ref().unwrap().args.len() == 1,
-            "command name should be the only arg"
-        );
+        assert_eq!(tokens, vec!["echo", "hello", "world"]);
     }
 
     #[test]
-    fn should_read_command() {
-        let input = "go";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader);
+    fn process_input_single_token() {
+        let input = io::Cursor::new("ls\n");
+        let tokens = process_input(input).unwrap();
+        assert_eq!(tokens, vec!["ls".to_string()]);
+    }
 
-        assert!(cmd.as_ref().is_ok());
-        assert!(matches!(cmd.as_ref().unwrap().type_, CommandType::Unknown));
-        assert!(
-            cmd.as_ref().unwrap().args.len() == 1,
-            "command name should be the only arg"
-        );
+    struct ErrReader;
+
+    impl io::Read for ErrReader {
+        fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::new(io::ErrorKind::UnexpectedEof, "read error"))
+        }
+    }
+
+    impl BufRead for ErrReader {
+        fn fill_buf(&mut self) -> io::Result<&[u8]> {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "fill_buf error",
+            ))
+        }
+        fn consume(&mut self, _n: usize) {}
     }
 
     #[test]
-    fn should_find_command_type() {
-        let cmd_name = String::from("go");
-        let cmd = Command::find_type(&cmd_name);
+    fn process_input_returns_unexpected_eof_on_read_error() {
+        let reader = ErrReader;
+        let err = process_input(reader).unwrap_err();
+        assert!(err.to_string().contains("unexpected EOF"));
+    }
 
-        assert!(matches!(cmd, CommandType::Unknown));
+    #[test]
+    fn should_return_command_not_found_for_unknown_command() {
+        let input = io::Cursor::new("unknowncmd\n");
+        let tokens = process_input(input).unwrap();
+        assert_eq!(tokens, vec!["unknowncmd".to_string()]);
     }
 }

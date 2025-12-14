@@ -1,6 +1,7 @@
-use crate::util::{Command, CommandType};
+use crate::command::{Command, CommandType};
 use std::io::{self, Write};
 
+mod command;
 mod util;
 
 fn main() -> anyhow::Result<()> {
