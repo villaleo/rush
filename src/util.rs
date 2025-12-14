@@ -2,8 +2,15 @@ use std::io::BufRead;
 use std::vec::Vec;
 
 use anyhow::bail;
+use thiserror::Error;
 
-pub enum Error {}
+#[derive(Error, Debug)]
+pub enum RushError {
+    #[error("{0}: command not found")]
+    CommandNotFound(String),
+    #[error("error reading input: unexpected EOF")]
+    UnexpectedEOF,
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandType {
@@ -48,7 +55,7 @@ impl Command {
                 Ok(())
             }
             CommandType::Exit => Ok(()),
-            CommandType::Unknown => bail!("{}: command not found", self.name),
+            CommandType::Unknown => bail!(RushError::CommandNotFound(self.name.to_owned())),
         }
     }
 }
@@ -65,7 +72,9 @@ impl std::fmt::Display for Command {
 
 fn process_input<R: BufRead>(mut reader: R) -> anyhow::Result<Vec<String>> {
     let mut input = String::new();
-    reader.read_line(&mut input)?;
+    reader
+        .read_line(&mut input)
+        .map_err(|_| RushError::UnexpectedEOF)?;
 
     let tokens = input
         .clone()
