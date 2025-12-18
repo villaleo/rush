@@ -1,6 +1,8 @@
 use std::io::BufRead;
+
 use std::vec::Vec;
 
+use anyhow::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -9,9 +11,11 @@ pub enum RushError {
     CommandNotFound(String),
     #[error("error reading input: unexpected EOF")]
     UnexpectedEOF,
+    #[error("{0}")]
+    InternalError(Error),
 }
 
-pub(crate) fn process_input<R: BufRead>(mut reader: R) -> anyhow::Result<Vec<String>> {
+pub(crate) fn process_input<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
     let mut input = String::new();
     reader
         .read_line(&mut input)
