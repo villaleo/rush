@@ -7,7 +7,7 @@ use anyhow::Error;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum RushError {
+pub(crate) enum RushError {
     #[error("{0}: command not found")]
     CommandNotFound(String),
     #[error("error reading input: unexpected EOF")]
@@ -18,7 +18,7 @@ pub enum RushError {
     UnterminatedQuote,
 }
 
-pub(crate) fn process_input<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
+pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
     let mut input = String::new();
     reader
         .read_line(&mut input)
@@ -82,7 +82,7 @@ mod tests {
 
     // Test helper to simplify test cases
     fn parse(input: &str) -> Result<Vec<String>, RushError> {
-        process_input(io::Cursor::new(input))
+        tokenize(io::Cursor::new(input))
     }
 
     #[test]
@@ -270,7 +270,7 @@ mod tests {
     #[test]
     fn test_read_error_handling() {
         let reader = ErrReader;
-        let err = process_input(reader).unwrap_err();
+        let err = tokenize(reader).unwrap_err();
         assert!(matches!(err, RushError::UnexpectedEOF));
     }
 }

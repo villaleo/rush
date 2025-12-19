@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::Error;
 
-use crate::util::{RushError, process_input};
+use crate::util::{RushError, tokenize};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandType {
@@ -26,7 +26,7 @@ pub struct Command {
 
 impl Command {
     pub fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
-        let args = process_input(reader)?;
+        let args = tokenize(reader)?;
         let name = args.first().unwrap().to_string();
         let type_ = CommandType::from_str(&name)?;
 
