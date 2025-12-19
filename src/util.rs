@@ -78,53 +78,175 @@ pub(crate) fn process_input<R: BufRead>(mut reader: R) -> Result<Vec<String>, Ru
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{self};
+    use std::io::{self, BufRead};
 
-    #[test]
-    fn process_input_parses_tokens() {
-        let input = io::Cursor::new("echo hello world\n");
-
-        let tokens = process_input(input);
-        assert!(tokens.is_ok());
-        assert_eq!(tokens.unwrap(), vec!["echo", "hello", "world"]);
+    // Test helper to simplify test cases
+    fn parse(input: &str) -> Result<Vec<String>, RushError> {
+        process_input(io::Cursor::new(input))
     }
 
     #[test]
-    fn process_input_parses_quoted_tokens() {
-        let input = io::Cursor::new("echo \"hello world\"\n");
-
-        let tokens = process_input(input);
-        assert!(tokens.is_ok());
-        assert_eq!(tokens.unwrap(), vec!["echo", "hello world"]);
-    }
-
-    #[test]
-    fn process_input_err_on_unterminated_quoted() {
-        let input = io::Cursor::new("echo \"hello world\n");
-
-        let tokens = process_input(input);
-        assert!(tokens.is_err());
-        assert!(matches!(tokens.unwrap_err(), RushError::UnterminatedQuote));
-    }
-
-    #[test]
-    fn process_input_parses_repeated_spaces_ok() {
-        let input = io::Cursor::new("echo \"two  spaces\"   and  some \"mo re\"\n");
-
-        let tokens = process_input(input);
-        assert!(tokens.is_ok());
+    fn test_basic_tokenization() {
         assert_eq!(
-            tokens.unwrap(),
+            parse("echo hello world\n").unwrap(),
+            vec!["echo", "hello", "world"]
+        );
+        assert_eq!(parse("ls\n").unwrap(), vec!["ls"]);
+        assert_eq!(parse("unknowncmd\n").unwrap(), vec!["unknowncmd"]);
+    }
+
+    #[test]
+    fn test_quoted_strings() {
+        assert_eq!(
+            parse("echo \"hello world\"\n").unwrap(),
+            vec!["echo", "hello world"]
+        );
+        assert_eq!(
+            parse("echo \"two  spaces\"   and  some \"mo re\"\n").unwrap(),
             vec!["echo", "two  spaces", "and", "some", "mo re"]
+        );
+        assert_eq!(
+            parse("\"single quoted token\"\n").unwrap(),
+            vec!["single quoted token"]
+        );
+        assert_eq!(
+            parse("\"first\" \"second\" \"third\"\n").unwrap(),
+            vec!["first", "second", "third"]
         );
     }
 
     #[test]
-    fn process_input_single_token() {
-        let input = io::Cursor::new("ls\n");
-        let tokens = process_input(input);
-        assert!(tokens.is_ok());
-        assert_eq!(tokens.unwrap(), vec!["ls".to_string()]);
+    fn test_unterminated_quotes() {
+        assert!(matches!(
+            parse("echo \"hello world\n").unwrap_err(),
+            RushError::UnterminatedQuote
+        ));
+        assert!(matches!(
+            parse("\"unterminated\n").unwrap_err(),
+            RushError::UnterminatedQuote
+        ));
+        assert!(matches!(
+            parse("cmd \"arg1\" \"unterminated\n").unwrap_err(),
+            RushError::UnterminatedQuote
+        ));
+    }
+
+    #[test]
+    fn test_whitespace_handling() {
+        // Multiple spaces between tokens
+        assert_eq!(
+            parse("echo    hello    world\n").unwrap(),
+            vec!["echo", "hello", "world"]
+        );
+
+        // Leading spaces
+        assert_eq!(parse("   echo hello\n").unwrap(), vec!["echo", "hello"]);
+
+        // Trailing spaces
+        assert_eq!(parse("echo hello   \n").unwrap(), vec!["echo", "hello"]);
+
+        // Multiple spaces everywhere
+        assert_eq!(
+            parse("   echo    hello    \n").unwrap(),
+            vec!["echo", "hello"]
+        );
+
+        // Only spaces (edge case)
+        assert_eq!(parse("     \n").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_empty_input() {
+        assert_eq!(parse("\n").unwrap(), Vec::<String>::new());
+        assert_eq!(parse("").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_quotes_with_special_chars() {
+        assert_eq!(
+            parse("echo \"hello!@#$%^&*()world\"\n").unwrap(),
+            vec!["echo", "hello!@#$%^&*()world"]
+        );
+        assert_eq!(
+            parse("echo \"path/to/file\"\n").unwrap(),
+            vec!["echo", "path/to/file"]
+        );
+        assert_eq!(
+            parse("grep \"pattern\" file.txt\n").unwrap(),
+            vec!["grep", "pattern", "file.txt"]
+        );
+    }
+
+    #[test]
+    fn test_empty_quoted_strings() {
+        assert_eq!(parse("\"\"\n").unwrap(), vec![""]);
+        assert_eq!(parse("echo \"\"\n").unwrap(), vec!["echo", ""]);
+        assert_eq!(parse("\"\" \"\" \"\"\n").unwrap(), vec!["", "", ""]);
+    }
+
+    #[test]
+    fn test_mixed_quotes_and_tokens() {
+        assert_eq!(
+            parse("cp \"source file\" dest\n").unwrap(),
+            vec!["cp", "source file", "dest"]
+        );
+        assert_eq!(
+            parse("command arg1 \"quoted arg\" arg2 \"another quoted\"\n").unwrap(),
+            vec!["command", "arg1", "quoted arg", "arg2", "another quoted"]
+        );
+    }
+
+    #[test]
+    fn test_consecutive_quotes() {
+        assert_eq!(parse("\"\"\"\" \n").unwrap(), vec!["", ""]);
+        assert_eq!(parse("\"a\"\"b\"\n").unwrap(), vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_quotes_at_boundaries() {
+        // Quote at start
+        assert_eq!(
+            parse("\"start\" middle end\n").unwrap(),
+            vec!["start", "middle", "end"]
+        );
+
+        // Quote at end
+        assert_eq!(
+            parse("start middle \"end\"\n").unwrap(),
+            vec!["start", "middle", "end"]
+        );
+
+        // Only quoted token
+        assert_eq!(parse("\"only\"\n").unwrap(), vec!["only"]);
+    }
+
+    #[test]
+    fn test_single_char_tokens() {
+        assert_eq!(parse("a b c\n").unwrap(), vec!["a", "b", "c"]);
+        assert_eq!(parse("\"a\" \"b\" \"c\"\n").unwrap(), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn test_long_inputs() {
+        let long_token = "a".repeat(1000);
+        let input = format!("echo {}\n", long_token);
+        assert_eq!(parse(&input).unwrap(), vec!["echo", &long_token]);
+
+        let long_quoted = format!("echo \"{}\"\n", long_token);
+        assert_eq!(parse(&long_quoted).unwrap(), vec!["echo", &long_token]);
+    }
+
+    #[test]
+    fn test_numbers_and_symbols() {
+        assert_eq!(
+            parse("command 123 456\n").unwrap(),
+            vec!["command", "123", "456"]
+        );
+        assert_eq!(parse("echo $VAR\n").unwrap(), vec!["echo", "$VAR"]);
+        assert_eq!(
+            parse("test -f file.txt\n").unwrap(),
+            vec!["test", "-f", "file.txt"]
+        );
     }
 
     struct ErrReader;
@@ -146,16 +268,9 @@ mod tests {
     }
 
     #[test]
-    fn process_input_returns_unexpected_eof_on_read_error() {
+    fn test_read_error_handling() {
         let reader = ErrReader;
         let err = process_input(reader).unwrap_err();
         assert!(matches!(err, RushError::UnexpectedEOF));
-    }
-
-    #[test]
-    fn should_return_command_not_found_for_unknown_command() {
-        let input = io::Cursor::new("unknowncmd\n");
-        let tokens = process_input(input).unwrap();
-        assert_eq!(tokens, vec!["unknowncmd".to_string()]);
     }
 }
