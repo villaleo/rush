@@ -10,14 +10,14 @@ use anyhow::Error;
 use crate::util::{RushError, tokenize};
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum CommandType {
+pub(crate) enum CommandType {
     Echo,
     Exit,
     Type,
 }
 
 #[derive(Debug)]
-pub struct Command {
+pub(crate) struct Command {
     #[allow(dead_code)]
     pub name: String,
     pub type_: CommandType,
@@ -25,7 +25,7 @@ pub struct Command {
 }
 
 impl Command {
-    pub fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
+    pub(crate) fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
         let args = tokenize(reader)?;
         let name = args.first().unwrap().to_string();
         let type_ = CommandType::from_str(&name)?;
