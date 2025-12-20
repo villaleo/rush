@@ -8,7 +8,7 @@ use thiserror::Error;
 use crate::command::CommandType;
 
 #[derive(Error, Debug)]
-pub(crate) enum RushError {
+pub enum RushError {
     #[error("{type_}: {msg}")]
     CommandError { type_: CommandType, msg: String },
     #[error("{0}: command not found")]
@@ -21,7 +21,7 @@ pub(crate) enum RushError {
     UnterminatedQuote,
 }
 
-pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
+pub fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
     let mut input = String::new();
     reader
         .read_line(&mut input)
@@ -30,7 +30,7 @@ pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushErr
     let Ok(ref input_tokens) = String::from_str(input.trim());
 
     let buf = &mut String::new();
-    let mut tokens = Vec::<String>::new();
+    let mut tokens = Vec::new();
     let mut quote_count = 0;
 
     for (i, char) in input_tokens.chars().enumerate() {
@@ -55,7 +55,7 @@ pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushErr
                 // into tokens and clear buf
                 if quote_count == 0 && char == ' ' {
                     // Skip over empty tokens
-                    if buf.trim().len() == 0 {
+                    if buf.trim().is_empty() {
                         continue;
                     }
 
@@ -65,7 +65,7 @@ pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushErr
                 }
 
                 // Push the current char into buf
-                buf.push_str(&format!("{}", char));
+                buf.push(char);
 
                 // At the end, push any remaining chars into tokens
                 if i == input_tokens.len() - 1 && buf.len() > 0 {

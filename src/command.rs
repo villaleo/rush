@@ -9,7 +9,7 @@ use std::{
 use crate::util::{RushError, tokenize};
 
 #[derive(Debug, Eq, PartialEq)]
-pub(crate) enum CommandType {
+pub enum CommandType {
     Echo,
     Exit,
     Type,
@@ -28,23 +28,25 @@ impl fmt::Display for CommandType {
 }
 
 #[derive(Debug)]
-pub(crate) struct Command {
+pub struct Command {
     pub type_: CommandType,
     pub args: Vec<String>,
 }
 
 impl Command {
-    pub(crate) fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
+    pub fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
         let args = tokenize(reader)?;
 
-        // Read the name of the command form the tokenized args
+        // Read the name of the command from the tokenized args
         let Some(name) = args.first() else {
             return Err(RushError::Nop);
         };
 
         let type_ = CommandType::from_str(&name)?;
-
-        Ok(Command { type_, args })
+        match type_ {
+            CommandType::Unknown(cmd) => Err(RushError::CommandNotFound(cmd)),
+            _ => Ok(Command { type_, args }),
+        }
     }
 
     pub fn run(&self) -> Result<(), RushError> {
@@ -59,10 +61,13 @@ impl Command {
                     });
                 }
 
-                let cmd_name = self.args.get(1).unwrap();
+                let Some(cmd_name) = self.args.get(1) else {
+                    unreachable!();
+                };
+
                 self.handle_type(cmd_name)
             }
-            CommandType::Unknown(_) => unreachable!(),
+            CommandType::Unknown(ref unknown) => self.handle_unknown_cmd(unknown),
         }
     }
 
@@ -70,7 +75,7 @@ impl Command {
         // Skip the first argument (command name)
         let tokens = &self.args[1..];
 
-        if tokens.len() == 0 {
+        if tokens.is_empty() {
             return Ok(());
         }
 
@@ -95,6 +100,10 @@ impl Command {
             }),
         }
     }
+
+    fn handle_unknown_cmd(&self, cmd: &str) -> Result<(), RushError> {
+        Err(RushError::CommandNotFound(cmd.into()))
+    }
 }
 
 impl FromStr for CommandType {
@@ -105,7 +114,7 @@ impl FromStr for CommandType {
             "exit" => Ok(CommandType::Exit),
             "echo" => Ok(CommandType::Echo),
             "type" => Ok(CommandType::Type),
-            unknown => Err(RushError::CommandNotFound(unknown.to_string())),
+            unknown => Ok(CommandType::Unknown(unknown.to_string())),
         }
     }
 }
@@ -124,7 +133,14 @@ fn is_executable(_path: &Path) -> bool {
 }
 
 fn is_builtin(cmd_name: &str) -> bool {
-    CommandType::from_str(cmd_name).is_ok()
+    let Ok(type_) = CommandType::from_str(cmd_name) else {
+        unreachable!()
+    };
+
+    match type_ {
+        CommandType::Unknown(_) => false,
+        _ => true,
+    }
 }
 
 fn find_in_path(cmd_name: &str) -> Result<Option<String>, RushError> {
@@ -171,8 +187,8 @@ mod tests {
         let cmd_name = String::from("go");
         let cmd = CommandType::from_str(&cmd_name);
 
-        assert!(cmd.is_err());
-        assert!(matches!(cmd.unwrap_err(), RushError::CommandNotFound(_)));
+        assert!(cmd.is_ok());
+        assert!(matches!(cmd.unwrap(), CommandType::Unknown(_)));
     }
 
     #[test]
