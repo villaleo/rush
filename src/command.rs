@@ -1,11 +1,10 @@
 use std::{
     env::{self, split_paths},
+    fmt,
     io::BufRead,
     path::Path,
     str::FromStr,
 };
-
-use anyhow::Error;
 
 use crate::util::{RushError, tokenize};
 
@@ -14,6 +13,18 @@ pub(crate) enum CommandType {
     Echo,
     Exit,
     Type,
+    Unknown(String),
+}
+
+impl fmt::Display for CommandType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CommandType::Echo => write!(f, "echo"),
+            CommandType::Exit => write!(f, "exit"),
+            CommandType::Type => write!(f, "type"),
+            CommandType::Unknown(cmd) => write!(f, "{}", cmd),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -42,14 +53,16 @@ impl Command {
             CommandType::Exit => Ok(()),
             CommandType::Type => {
                 if self.args.len() == 1 {
-                    return Err(RushError::InternalError(Error::msg(
-                        "type: missing argument",
-                    )));
+                    return Err(RushError::CommandError {
+                        type_: CommandType::Type,
+                        msg: "missing argument".into(),
+                    });
                 }
 
                 let cmd_name = self.args.get(1).unwrap();
                 self.handle_type(cmd_name)
             }
+            CommandType::Unknown(_) => unreachable!(),
         }
     }
 
@@ -76,10 +89,10 @@ impl Command {
                 println!("{} is {}", cmd_name, path);
                 Ok(())
             }
-            None => Err(RushError::InternalError(Error::msg(format!(
-                "{}: not found",
-                cmd_name
-            )))),
+            None => Err(RushError::CommandError {
+                type_: CommandType::Unknown(cmd_name.into()),
+                msg: "not found".into(),
+            }),
         }
     }
 }
@@ -93,16 +106,6 @@ impl FromStr for CommandType {
             "echo" => Ok(CommandType::Echo),
             "type" => Ok(CommandType::Type),
             unknown => Err(RushError::CommandNotFound(unknown.to_string())),
-        }
-    }
-}
-
-impl std::fmt::Display for Command {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.type_ {
-            CommandType::Echo => write!(f, "echo"),
-            CommandType::Exit => write!(f, "exit"),
-            CommandType::Type => write!(f, "type"),
         }
     }
 }
@@ -339,7 +342,13 @@ mod tests {
 
         let result = cmd.run();
         assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RushError::InternalError(_)));
+        assert!(matches!(
+            result.unwrap_err(),
+            RushError::CommandError {
+                type_: CommandType::Type,
+                msg: _
+            }
+        ));
     }
 
     #[test]

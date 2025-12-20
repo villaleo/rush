@@ -3,21 +3,22 @@ use std::io::BufRead;
 use std::str::FromStr;
 use std::vec::Vec;
 
-use anyhow::Error;
 use thiserror::Error;
+
+use crate::command::CommandType;
 
 #[derive(Error, Debug)]
 pub(crate) enum RushError {
+    #[error("{type_}: {msg}")]
+    CommandError { type_: CommandType, msg: String },
     #[error("{0}: command not found")]
     CommandNotFound(String),
-    #[error("error reading input: unexpected EOF")]
-    UnexpectedEOF,
-    #[error("{0}")]
-    InternalError(Error),
-    #[error("error: unterminated quote")]
-    UnterminatedQuote,
     #[error("")]
     Nop,
+    #[error("error reading input: unexpected EOF")]
+    UnexpectedEOF,
+    #[error("error: unterminated quote")]
+    UnterminatedQuote,
 }
 
 pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {

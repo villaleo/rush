@@ -1,5 +1,3 @@
-use anyhow::Error;
-
 use crate::{
     command::{Command, CommandType},
     util::RushError,
@@ -11,9 +9,7 @@ mod util;
 
 fn rush() -> Result<(), RushError> {
     print!("$ ");
-    io::stdout()
-        .flush()
-        .map_err(|err| RushError::InternalError(Error::new(err)))?;
+    io::stdout().flush().map_err(|_| RushError::UnexpectedEOF)?;
 
     let stdin = io::stdin().lock();
     let cmd = Command::new(stdin)?;
