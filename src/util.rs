@@ -16,6 +16,8 @@ pub(crate) enum RushError {
     InternalError(Error),
     #[error("error: unterminated quote")]
     UnterminatedQuote,
+    #[error("")]
+    Nop,
 }
 
 pub(crate) fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {

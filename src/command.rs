@@ -18,8 +18,6 @@ pub(crate) enum CommandType {
 
 #[derive(Debug)]
 pub(crate) struct Command {
-    #[allow(dead_code)]
-    pub name: String,
     pub type_: CommandType,
     pub args: Vec<String>,
 }
@@ -27,10 +25,15 @@ pub(crate) struct Command {
 impl Command {
     pub(crate) fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
         let args = tokenize(reader)?;
-        let name = args.first().unwrap().to_string();
+
+        // Read the name of the command form the tokenized args
+        let Some(name) = args.first() else {
+            return Err(RushError::Nop);
+        };
+
         let type_ = CommandType::from_str(&name)?;
 
-        Ok(Command { name, type_, args })
+        Ok(Command { type_, args })
     }
 
     pub fn run(&self) -> Result<(), RushError> {
@@ -209,7 +212,6 @@ mod tests {
         let reader = io::Cursor::new(input);
         let cmd = Command::new(reader).unwrap();
 
-        assert_eq!(cmd.name, "echo");
         assert_eq!(cmd.args, vec!["echo", "hello", "world", "foo"]);
         assert!(matches!(cmd.type_, CommandType::Echo));
     }

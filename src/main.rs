@@ -27,9 +27,11 @@ fn rush() -> Result<(), RushError> {
 
 fn main() -> Result<(), RushError> {
     loop {
-        match rush() {
-            Ok(_) => {}
-            Err(error) => eprintln!("{error}"),
+        if let Err(error) = rush() {
+            match error {
+                RushError::Nop => {}
+                error => eprintln!("{error}"),
+            }
         }
     }
 }
