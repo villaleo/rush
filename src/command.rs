@@ -53,17 +53,8 @@ impl Command {
         match self.type_ {
             CommandType::Echo => self.handle_echo(),
             CommandType::Exit => Ok(()),
-            CommandType::Type => {
-                let Some(cmd_name) = self.args.get(1) else {
-                    return Err(RushError::CommandError {
-                        type_: CommandType::Type,
-                        msg: "missing argument".into(),
-                    });
-                };
-
-                self.handle_type(cmd_name)
-            }
-            CommandType::Unknown(ref unknown) => self.handle_unknown_cmd(unknown),
+            CommandType::Type => self.handle_type(),
+            CommandType::Unknown(ref cmd_name) => self.handle_unknown_cmd(cmd_name),
         }
     }
 
@@ -79,7 +70,14 @@ impl Command {
         Ok(())
     }
 
-    fn handle_type(&self, cmd_name: &str) -> Result<(), RushError> {
+    fn handle_type(&self) -> Result<(), RushError> {
+        let Some(cmd_name) = self.args.get(1) else {
+            return Err(RushError::CommandError {
+                type_: CommandType::Type,
+                msg: "missing argument".into(),
+            });
+        };
+
         if is_builtin(cmd_name) {
             println!("{cmd_name} is a shell builtin");
             return Ok(());
@@ -200,10 +198,7 @@ mod tests {
             assert_eq!(CommandType::Echo.to_string(), "echo");
             assert_eq!(CommandType::Exit.to_string(), "exit");
             assert_eq!(CommandType::Type.to_string(), "type");
-            assert_eq!(
-                CommandType::Unknown("custom".into()).to_string(),
-                "custom"
-            );
+            assert_eq!(CommandType::Unknown("custom".into()).to_string(), "custom");
         }
 
         #[test]
