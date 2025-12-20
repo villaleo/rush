@@ -55,12 +55,13 @@ impl Command {
 
     fn handle_echo(&self) -> Result<(), RushError> {
         // Skip the first argument (command name)
-        let args = &self.args[1..];
+        let tokens = &self.args[1..];
 
-        if let Some((last, args)) = args.split_last() {
-            println!("{} {}", args.join(" "), last);
+        if tokens.len() == 0 {
+            return Ok(());
         }
 
+        println!("{}", tokens.join(" "));
         Ok(())
     }
 
