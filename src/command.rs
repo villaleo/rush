@@ -9,7 +9,7 @@ use std::{
 use crate::util::{RushError, tokenize};
 
 #[derive(Debug, Eq, PartialEq)]
-pub enum CommandType {
+pub(crate) enum CommandType {
     Echo,
     Exit,
     Type,
@@ -28,13 +28,13 @@ impl fmt::Display for CommandType {
 }
 
 #[derive(Debug)]
-pub struct Command {
+pub(crate) struct Command {
     pub type_: CommandType,
     pub args: Vec<String>,
 }
 
 impl Command {
-    pub fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
+    pub(crate) fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
         let args = tokenize(reader)?;
 
         // Read the name of the command from the tokenized args
@@ -42,27 +42,23 @@ impl Command {
             return Err(RushError::Nop);
         };
 
-        let type_ = CommandType::from_str(&name)?;
+        let type_ = CommandType::from_str(name)?;
         match type_ {
             CommandType::Unknown(cmd) => Err(RushError::CommandNotFound(cmd)),
             _ => Ok(Command { type_, args }),
         }
     }
 
-    pub fn run(&self) -> Result<(), RushError> {
+    pub(crate) fn run(&self) -> Result<(), RushError> {
         match self.type_ {
             CommandType::Echo => self.handle_echo(),
             CommandType::Exit => Ok(()),
             CommandType::Type => {
-                if self.args.len() == 1 {
+                let Some(cmd_name) = self.args.get(1) else {
                     return Err(RushError::CommandError {
                         type_: CommandType::Type,
                         msg: "missing argument".into(),
                     });
-                }
-
-                let Some(cmd_name) = self.args.get(1) else {
-                    unreachable!();
                 };
 
                 self.handle_type(cmd_name)
@@ -133,14 +129,10 @@ fn is_executable(_path: &Path) -> bool {
 }
 
 fn is_builtin(cmd_name: &str) -> bool {
-    let Ok(type_) = CommandType::from_str(cmd_name) else {
-        unreachable!()
-    };
-
-    match type_ {
-        CommandType::Unknown(_) => false,
-        _ => true,
-    }
+    matches!(
+        CommandType::from_str(cmd_name),
+        Ok(CommandType::Echo | CommandType::Exit | CommandType::Type)
+    )
 }
 
 fn find_in_path(cmd_name: &str) -> Result<Option<String>, RushError> {
@@ -163,230 +155,342 @@ fn find_in_path(cmd_name: &str) -> Result<Option<String>, RushError> {
 
 #[cfg(test)]
 mod tests {
-    use crate::util::RushError;
-
     use super::*;
-    use std::io::{self};
+    use crate::util::RushError;
+    use std::io;
 
-    #[test]
-    fn should_exit_on_find_exit_cmd() {
-        let input = "exit";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader);
-
-        assert!(cmd.as_ref().is_ok());
-        assert!(matches!(cmd.as_ref().unwrap().type_, CommandType::Exit));
-        assert!(
-            cmd.as_ref().unwrap().args.len() == 1,
-            "command name should be the only arg"
-        );
+    // Test helper to simplify command creation
+    fn parse_cmd(input: &str) -> Result<Command, RushError> {
+        Command::new(io::Cursor::new(input))
     }
 
-    #[test]
-    fn should_find_command_type() {
-        let cmd_name = String::from("go");
-        let cmd = CommandType::from_str(&cmd_name);
+    mod command_type {
+        use super::*;
 
-        assert!(cmd.is_ok());
-        assert!(matches!(cmd.unwrap(), CommandType::Unknown(_)));
+        #[test]
+        fn parse_echo() {
+            let result = CommandType::from_str("echo");
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), CommandType::Echo));
+        }
+
+        #[test]
+        fn parse_exit() {
+            let result = CommandType::from_str("exit");
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), CommandType::Exit));
+        }
+
+        #[test]
+        fn parse_type() {
+            let result = CommandType::from_str("type");
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), CommandType::Type));
+        }
+
+        #[test]
+        fn parse_unknown_wraps_in_variant() {
+            let result = CommandType::from_str("nonexistent");
+            assert!(result.is_ok());
+            assert!(matches!(result.unwrap(), CommandType::Unknown(_)));
+        }
+
+        #[test]
+        fn display_formatting() {
+            assert_eq!(CommandType::Echo.to_string(), "echo");
+            assert_eq!(CommandType::Exit.to_string(), "exit");
+            assert_eq!(CommandType::Type.to_string(), "type");
+            assert_eq!(
+                CommandType::Unknown("custom".into()).to_string(),
+                "custom"
+            );
+        }
+
+        #[test]
+        fn whitespace_trimmed() {
+            assert!(matches!(
+                CommandType::from_str("  echo  ").unwrap(),
+                CommandType::Echo
+            ));
+            assert!(matches!(
+                CommandType::from_str("\texit\n").unwrap(),
+                CommandType::Exit
+            ));
+        }
     }
 
-    #[test]
-    fn should_return_command_not_found_for_unknown_command() {
-        let input = "nonexistent";
-        let reader = io::Cursor::new(input);
+    mod command_parsing {
+        use super::*;
 
-        let cmd = Command::new(reader);
-        assert!(cmd.is_err());
-        assert!(matches!(cmd.unwrap_err(), RushError::CommandNotFound(_)));
+        #[test]
+        fn parse_exit() {
+            let cmd = parse_cmd("exit").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Exit));
+            assert_eq!(cmd.args, vec!["exit"]);
+        }
+
+        #[test]
+        fn parse_echo_with_args() {
+            let cmd = parse_cmd("echo hello world foo").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Echo));
+            assert_eq!(cmd.args, vec!["echo", "hello", "world", "foo"]);
+        }
+
+        #[test]
+        fn parse_type_with_arg() {
+            let cmd = parse_cmd("type echo").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Type));
+            assert_eq!(cmd.args, vec!["type", "echo"]);
+        }
+
+        #[test]
+        fn unknown_command_returns_error() {
+            let result = parse_cmd("nonexistent");
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), RushError::CommandNotFound(_)));
+        }
+
+        #[test]
+        fn unknown_command_error_contains_name() {
+            let result = parse_cmd("mycustomcmd");
+            assert!(result.is_err());
+
+            let error_str = result.unwrap_err().to_string();
+            assert!(error_str.contains("mycustomcmd"));
+            assert!(error_str.contains("command not found"));
+        }
+
+        #[test]
+        fn empty_input_returns_nop() {
+            let result = parse_cmd("");
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), RushError::Nop));
+        }
+
+        #[test]
+        fn whitespace_only_returns_nop() {
+            let result = parse_cmd("   ");
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), RushError::Nop));
+        }
+
+        #[test]
+        fn io_error_propagates() {
+            struct FailingReader;
+
+            impl io::Read for FailingReader {
+                fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
+                    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))
+                }
+            }
+
+            impl io::BufRead for FailingReader {
+                fn fill_buf(&mut self) -> io::Result<&[u8]> {
+                    Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))
+                }
+                fn consume(&mut self, _amt: usize) {}
+            }
+
+            let result = Command::new(FailingReader);
+            assert!(result.is_err());
+            assert!(matches!(result.unwrap_err(), RushError::UnexpectedEOF));
+        }
+
+        #[test]
+        fn quoted_arguments_preserved() {
+            let cmd = parse_cmd("echo \"hello world\"").unwrap();
+            assert_eq!(cmd.args, vec!["echo", "hello world"]);
+        }
+
+        #[test]
+        fn multiple_spaces_handled() {
+            let cmd = parse_cmd("echo    hello    world").unwrap();
+            assert_eq!(cmd.args, vec!["echo", "hello", "world"]);
+        }
     }
 
-    #[test]
-    fn should_return_unexpected_eof_on_read_failure() {
-        struct FailingReader;
+    mod echo_command {
+        use super::*;
 
-        impl io::Read for FailingReader {
-            fn read(&mut self, _buf: &mut [u8]) -> io::Result<usize> {
-                Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))
+        #[test]
+        fn no_args() {
+            let cmd = parse_cmd("echo").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn single_arg() {
+            let cmd = parse_cmd("echo hello").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn multiple_args() {
+            let cmd = parse_cmd("echo hello world test").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn quoted_args() {
+            let cmd = parse_cmd("echo \"hello world\" test").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["echo", "hello world", "test"]);
+        }
+
+        #[test]
+        fn empty_quoted_string() {
+            let cmd = parse_cmd("echo \"\"").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["echo", ""]);
+        }
+
+        #[test]
+        fn special_characters() {
+            let cmd = parse_cmd("echo !@#$%^&*()").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn numbers() {
+            let cmd = parse_cmd("echo 123 456").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["echo", "123", "456"]);
+        }
+
+        #[test]
+        fn with_leading_trailing_spaces() {
+            let cmd = parse_cmd("   echo   hello   ").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["echo", "hello"]);
+        }
+    }
+
+    mod exit_command {
+        use super::*;
+
+        #[test]
+        fn executes_successfully() {
+            let cmd = parse_cmd("exit").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn with_args_ignored() {
+            let cmd = parse_cmd("exit 0").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["exit", "0"]);
+        }
+    }
+
+    mod type_command {
+        use super::*;
+
+        #[test]
+        fn builtin_echo() {
+            let cmd = parse_cmd("type echo").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn builtin_exit() {
+            let cmd = parse_cmd("type exit").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn builtin_type_itself() {
+            let cmd = parse_cmd("type type").unwrap();
+            assert!(cmd.run().is_ok());
+        }
+
+        #[test]
+        fn no_args_fails() {
+            let cmd = parse_cmd("type").unwrap();
+            let result = cmd.run();
+            assert!(result.is_err());
+            assert!(matches!(
+                result.unwrap_err(),
+                RushError::CommandError {
+                    type_: CommandType::Type,
+                    msg: _
+                }
+            ));
+        }
+
+        #[test]
+        fn no_args_error_message() {
+            let cmd = parse_cmd("type").unwrap();
+            let error = cmd.run().unwrap_err();
+            assert!(error.to_string().contains("missing argument"));
+        }
+
+        #[test]
+        fn unknown_command_fails() {
+            let cmd = parse_cmd("type nonexistent").unwrap();
+            let result = cmd.run();
+            assert!(result.is_err());
+            assert!(result.unwrap_err().to_string().contains("not found"));
+        }
+
+        #[test]
+        fn unknown_command_error_contains_name() {
+            let cmd = parse_cmd("type nonexistent123").unwrap();
+            let error = cmd.run().unwrap_err();
+            let error_msg = error.to_string();
+            assert!(error_msg.contains("nonexistent123"));
+        }
+
+        #[test]
+        fn path_command_ls_found_when_path_set() {
+            // Test with 'ls' which should exist on macOS/Unix
+            if env::var_os("PATH").is_some() {
+                let cmd = parse_cmd("type ls").unwrap();
+                let result = cmd.run();
+                assert!(result.is_ok());
             }
         }
 
-        impl io::BufRead for FailingReader {
-            fn fill_buf(&mut self) -> io::Result<&[u8]> {
-                Err(io::Error::new(io::ErrorKind::UnexpectedEof, "EOF"))
-            }
+        #[test]
+        fn multiple_args_uses_first() {
+            let cmd = parse_cmd("type echo exit").unwrap();
+            assert!(cmd.run().is_ok());
+            assert_eq!(cmd.args, vec!["type", "echo", "exit"]);
+        }
+    }
 
-            fn consume(&mut self, _amt: usize) {}
+    mod path_utilities {
+        use super::*;
+
+        #[test]
+        fn is_builtin_recognizes_commands() {
+            assert!(is_builtin("echo"));
+            assert!(is_builtin("exit"));
+            assert!(is_builtin("type"));
+            assert!(!is_builtin("nonexistent"));
+            assert!(!is_builtin("ls"));
+            assert!(!is_builtin("grep"));
         }
 
-        let reader = FailingReader;
-        let result = Command::new(reader);
+        #[test]
+        fn is_builtin_with_whitespace() {
+            assert!(is_builtin(" echo "));
+            assert!(is_builtin("\texit"));
+        }
 
-        assert!(result.is_err());
-        assert!(matches!(result.unwrap_err(), RushError::UnexpectedEOF));
-    }
+        #[test]
+        fn find_in_path_returns_none_for_nonexistent() {
+            let result = find_in_path("definitely_does_not_exist_12345");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), None);
+        }
 
-    #[test]
-    fn should_parse_command_with_multiple_arguments() {
-        let input = "echo hello world foo";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).unwrap();
-
-        assert_eq!(cmd.args, vec!["echo", "hello", "world", "foo"]);
-        assert!(matches!(cmd.type_, CommandType::Echo));
-    }
-
-    #[test]
-    fn should_identify_echo_command_type() {
-        let result = CommandType::from_str("echo");
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), CommandType::Echo));
-    }
-
-    #[test]
-    fn should_identify_exit_command_type() {
-        let result = CommandType::from_str("exit");
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), CommandType::Exit));
-    }
-
-    #[test]
-    fn should_identify_type_command_type() {
-        let result = CommandType::from_str("type");
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), CommandType::Type));
-    }
-
-    #[test]
-    fn should_print_all_arguments_for_echo_command() {
-        let input = "echo hello world";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'echo'");
-
-        // note: can't easily capture stdout in a unit test,
-        // but we can verify the command runs without error
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_exit_command_should_succeed() {
-        let input = "exit";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'exit'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_echo_with_no_args_should_succeed() {
-        let input = "echo";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'echo'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_echo_with_single_arg_should_succeed() {
-        let input = "echo hello";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'echo'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_echo_with_multiple_args_should_succeed() {
-        let input = "echo hello world test";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'echo'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_type_with_builtin_should_succeed() {
-        let input = "type echo";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'type'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_type_with_exit_builtin_should_succeed() {
-        let input = "type exit";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'type'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_type_with_type_builtin_should_succeed() {
-        let input = "type type";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'type'");
-
-        let result = cmd.run();
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn run_type_with_unknown_command_should_fail() {
-        let input = "type nonexistent";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'type'");
-
-        let result = cmd.run();
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("not found"));
-    }
-
-    #[test]
-    fn run_type_with_no_args_should_fail() {
-        let input = "type";
-        let reader = io::Cursor::new(input);
-        let cmd = Command::new(reader).expect("expected command 'type'");
-
-        let result = cmd.run();
-        assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            RushError::CommandError {
-                type_: CommandType::Type,
-                msg: _
+        #[test]
+        fn find_in_path_finds_ls_on_unix() {
+            if env::var_os("PATH").is_some() {
+                let result = find_in_path("ls");
+                assert!(result.is_ok());
+                assert!(result.unwrap().is_some());
             }
-        ));
-    }
-
-    #[test]
-    fn run_unknown_command_should_fail_with_command_not_found() {
-        let input = "unknowncmd";
-        let reader = io::Cursor::new(input);
-
-        let cmd = Command::new(reader);
-        assert!(cmd.is_err());
-        assert!(matches!(cmd.unwrap_err(), RushError::CommandNotFound(_)));
-    }
-
-    #[test]
-    fn run_unknown_command_error_contains_command_name() {
-        let input = "mycustomcmd";
-        let reader = io::Cursor::new(input);
-
-        let cmd = Command::new(reader);
-        assert!(cmd.is_err());
-
-        let error_str = cmd.unwrap_err().to_string();
-        assert!(error_str.contains(input));
-        assert!(error_str.contains("command not found"));
+        }
     }
 }
