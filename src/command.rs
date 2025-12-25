@@ -4,7 +4,6 @@ use std::{
     io::{self, BufRead},
     path::Path,
     process::{self},
-    str::FromStr,
     thread,
 };
 
@@ -46,7 +45,7 @@ impl Command {
             return Err(RushError::Nop);
         };
 
-        let type_ = CommandType::from_str(name)?;
+        let type_ = CommandType::from_str(name);
         match type_ {
             CommandType::Unknown(cmd) => match self::find_in_path(&cmd)? {
                 Some(path) => Ok(Command {
@@ -172,15 +171,13 @@ impl Command {
     }
 }
 
-impl FromStr for CommandType {
-    type Err = RushError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
+impl CommandType {
+    fn from_str(s: &str) -> Self {
         match s.trim() {
-            "exit" => Ok(CommandType::Exit),
-            "echo" => Ok(CommandType::Echo),
-            "type" => Ok(CommandType::Type),
-            unknown => Ok(CommandType::Unknown(unknown.to_string())),
+            "exit" => CommandType::Exit,
+            "echo" => CommandType::Echo,
+            "type" => CommandType::Type,
+            unknown => CommandType::Unknown(unknown.to_string()),
         }
     }
 }
@@ -201,7 +198,7 @@ fn is_executable(_path: &Path) -> bool {
 fn is_builtin(cmd_name: &str) -> bool {
     matches!(
         CommandType::from_str(cmd_name),
-        Ok(CommandType::Echo | CommandType::Exit | CommandType::Type)
+        CommandType::Echo | CommandType::Exit | CommandType::Type
     )
 }
 
@@ -239,30 +236,25 @@ mod tests {
 
         #[test]
         fn parse_echo() {
-            let result = CommandType::from_str("echo");
-            assert!(result.is_ok());
-            assert!(matches!(result.unwrap(), CommandType::Echo));
+            assert!(matches!(CommandType::from_str("echo"), CommandType::Echo));
         }
 
         #[test]
         fn parse_exit() {
-            let result = CommandType::from_str("exit");
-            assert!(result.is_ok());
-            assert!(matches!(result.unwrap(), CommandType::Exit));
+            assert!(matches!(CommandType::from_str("exit"), CommandType::Exit));
         }
 
         #[test]
         fn parse_type() {
-            let result = CommandType::from_str("type");
-            assert!(result.is_ok());
-            assert!(matches!(result.unwrap(), CommandType::Type));
+            assert!(matches!(CommandType::from_str("type"), CommandType::Type));
         }
 
         #[test]
         fn parse_unknown_wraps_in_variant() {
-            let result = CommandType::from_str("nonexistent");
-            assert!(result.is_ok());
-            assert!(matches!(result.unwrap(), CommandType::Unknown(_)));
+            assert!(matches!(
+                CommandType::from_str("nonexistent"),
+                CommandType::Unknown(_)
+            ));
         }
 
         #[test]
@@ -276,11 +268,11 @@ mod tests {
         #[test]
         fn whitespace_trimmed() {
             assert!(matches!(
-                CommandType::from_str("  echo  ").unwrap(),
+                CommandType::from_str("  echo  "),
                 CommandType::Echo
             ));
             assert!(matches!(
-                CommandType::from_str("\texit\n").unwrap(),
+                CommandType::from_str("\texit\n"),
                 CommandType::Exit
             ));
         }
