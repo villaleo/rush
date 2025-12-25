@@ -1,5 +1,5 @@
 [package]
-name = "rush"
+name = "codecrafters-shell"
 version = "0.1.0"
 authors = ["Leonardo Villalobos <villaleobos@gmail.com>"]
 edition = "2024"
