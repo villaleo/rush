@@ -14,6 +14,7 @@ pub(crate) enum CommandType {
     Echo,
     Executable { path: String, name: String },
     Exit,
+    Pwd,
     Type,
     Unknown(String),
 }
@@ -24,6 +25,7 @@ impl fmt::Display for CommandType {
             CommandType::Echo => write!(f, "echo"),
             CommandType::Executable { name, .. } => write!(f, "{}", name),
             CommandType::Exit => write!(f, "exit"),
+            CommandType::Pwd => write!(f, "pwd"),
             CommandType::Type => write!(f, "type"),
             CommandType::Unknown(cmd) => write!(f, "{}", cmd),
         }
@@ -68,6 +70,7 @@ impl Command {
                 }
             }
             CommandType::Exit => Ok(()),
+            CommandType::Pwd => self.handle_pwd(),
             CommandType::Type => self.handle_type(),
             CommandType::Unknown(ref cmd_name) => self.handle_unknown_cmd(cmd_name),
         }
@@ -139,6 +142,16 @@ impl Command {
         })
     }
 
+    fn handle_pwd(&self) -> Result<(), RushError> {
+        match find_in_path("pwd")? {
+            Some(ref path) => match self.handle_executable(path, "pwd") {
+                Ok(_status) => Ok(()),
+                Err(error) => Err(error),
+            },
+            None => Err(RushError::CommandNotFound("pwd".into())),
+        }
+    }
+
     fn handle_type(&self) -> Result<(), RushError> {
         let Some(cmd_name) = self.args.get(1) else {
             return Err(RushError::CommandError {
@@ -176,6 +189,7 @@ impl CommandType {
         match s.trim() {
             "exit" => CommandType::Exit,
             "echo" => CommandType::Echo,
+            "pwd" => CommandType::Pwd,
             "type" => CommandType::Type,
             unknown => CommandType::Unknown(unknown.to_string()),
         }
@@ -198,7 +212,7 @@ fn is_executable(_path: &Path) -> bool {
 fn is_builtin(cmd_name: &str) -> bool {
     matches!(
         CommandType::from_str(cmd_name),
-        CommandType::Echo | CommandType::Exit | CommandType::Type
+        CommandType::Echo | CommandType::Exit | CommandType::Pwd | CommandType::Type
     )
 }
 
@@ -245,6 +259,11 @@ mod tests {
         }
 
         #[test]
+        fn parse_pwd() {
+            assert!(matches!(CommandType::from_str("pwd"), CommandType::Pwd));
+        }
+
+        #[test]
         fn parse_type() {
             assert!(matches!(CommandType::from_str("type"), CommandType::Type));
         }
@@ -261,6 +280,7 @@ mod tests {
         fn display_formatting() {
             assert_eq!(CommandType::Echo.to_string(), "echo");
             assert_eq!(CommandType::Exit.to_string(), "exit");
+            assert_eq!(CommandType::Pwd.to_string(), "pwd");
             assert_eq!(CommandType::Type.to_string(), "type");
             assert_eq!(CommandType::Unknown("custom".into()).to_string(), "custom");
         }
@@ -293,6 +313,13 @@ mod tests {
             let cmd = parse_cmd("echo hello world foo").unwrap();
             assert!(matches!(cmd.type_, CommandType::Echo));
             assert_eq!(cmd.args, vec!["echo", "hello", "world", "foo"]);
+        }
+
+        #[test]
+        fn parse_pwd() {
+            let cmd = parse_cmd("pwd").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Pwd));
+            assert_eq!(cmd.args, vec!["pwd"]);
         }
 
         #[test]
@@ -438,6 +465,16 @@ mod tests {
             let cmd = parse_cmd("exit 0").unwrap();
             assert!(cmd.run().is_ok());
             assert_eq!(cmd.args, vec!["exit", "0"]);
+        }
+    }
+
+    mod pwd_command {
+        use super::*;
+
+        #[test]
+        fn executes_successfully() {
+            let cmd = parse_cmd("pwd").unwrap();
+            assert!(cmd.run().is_ok());
         }
     }
 
