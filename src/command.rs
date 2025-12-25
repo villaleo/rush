@@ -11,6 +11,7 @@ use crate::util::{RushError, tokenize};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandType {
+    Cd,
     Echo,
     Executable { path: String, name: String },
     Exit,
@@ -22,6 +23,7 @@ pub(crate) enum CommandType {
 impl fmt::Display for CommandType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            CommandType::Cd => write!(f, "cd"),
             CommandType::Echo => write!(f, "echo"),
             CommandType::Executable { name, .. } => write!(f, "{}", name),
             CommandType::Exit => write!(f, "exit"),
@@ -62,6 +64,7 @@ impl Command {
 
     pub(crate) fn run(&self) -> Result<(), RushError> {
         match self.type_ {
+            CommandType::Cd => self.handle_cd(),
             CommandType::Echo => self.handle_echo(),
             CommandType::Executable { ref path, ref name } => {
                 match self.handle_executable(&path, &name) {
@@ -74,6 +77,30 @@ impl Command {
             CommandType::Type => self.handle_type(),
             CommandType::Unknown(ref cmd_name) => self.handle_unknown_cmd(cmd_name),
         }
+    }
+
+    fn handle_cd(&self) -> Result<(), RushError> {
+        if let Some(target_dir) = &self.args.get(1) {
+            return env::set_current_dir(&Path::new(target_dir)).map_err(|error| {
+                RushError::CommandError {
+                    type_: CommandType::Cd,
+                    msg: format!("{}: No such file or directory", target_dir),
+                    status: error.raw_os_error(),
+                }
+            });
+        }
+
+        let home_dir = env::home_dir().ok_or_else(|| RushError::CommandError {
+            type_: CommandType::Cd,
+            msg: "failed to locate home directory".into(),
+            status: Some(1),
+        })?;
+
+        env::set_current_dir(&Path::new(&home_dir)).map_err(|error| RushError::CommandError {
+            type_: CommandType::Cd,
+            msg: error.to_string(),
+            status: error.raw_os_error(),
+        })
     }
 
     fn handle_echo(&self) -> Result<(), RushError> {
@@ -187,6 +214,7 @@ impl Command {
 impl CommandType {
     fn from_str(s: &str) -> Self {
         match s.trim() {
+            "cd" => CommandType::Cd,
             "exit" => CommandType::Exit,
             "echo" => CommandType::Echo,
             "pwd" => CommandType::Pwd,
@@ -212,7 +240,11 @@ fn is_executable(_path: &Path) -> bool {
 fn is_builtin(cmd_name: &str) -> bool {
     matches!(
         CommandType::from_str(cmd_name),
-        CommandType::Echo | CommandType::Exit | CommandType::Pwd | CommandType::Type
+        CommandType::Cd
+            | CommandType::Echo
+            | CommandType::Exit
+            | CommandType::Pwd
+            | CommandType::Type
     )
 }
 
@@ -448,6 +480,153 @@ mod tests {
             let cmd = parse_cmd("   echo   hello   ").unwrap();
             assert!(cmd.run().is_ok());
             assert_eq!(cmd.args, vec!["echo", "hello"]);
+        }
+    }
+
+    mod cd_command {
+        use super::*;
+        use serial_test::serial;
+
+        #[test]
+        fn parse_cd_command() {
+            let cmd = parse_cmd("cd /tmp").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Cd));
+            assert_eq!(cmd.args, vec!["cd", "/tmp"]);
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_absolute_path() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd /tmp").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            // Restore original directory before assertions
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            assert!(
+                // On macOS, /tmp is a symlink to /private/tmp
+                current == Path::new("/tmp") || current == Path::new("/private/tmp"),
+                "Expected /tmp or /private/tmp, got {:?}",
+                current
+            );
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_root() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd /").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            // Restore original directory before assertions
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            assert_eq!(current, Path::new("/"));
+        }
+
+        #[test]
+        fn cd_to_nonexistent_directory() {
+            let cmd = parse_cmd("cd /nonexistent_directory_12345").unwrap();
+            let result = cmd.run();
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { type_, msg, .. }) = result {
+                assert!(matches!(type_, CommandType::Cd));
+                assert!(msg.contains("No such file") || msg.contains("cannot find"));
+            } else {
+                panic!("Expected CommandError");
+            }
+        }
+
+        #[test]
+        fn cd_to_file_not_directory() {
+            // Try to cd to /etc/hosts which is a file
+            let cmd = parse_cmd("cd /etc/hosts").unwrap();
+            let result = cmd.run();
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { type_, .. }) = result {
+                assert!(matches!(type_, CommandType::Cd));
+            } else {
+                panic!("Expected CommandError");
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_with_no_arguments() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd").unwrap();
+            let result = cmd.run();
+            let _current = env::current_dir().unwrap();
+
+            // Restore original directory before assertions
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+        }
+
+        #[test]
+        #[serial]
+        fn cd_with_multiple_path_segments() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Test with a path that has multiple segments
+            let cmd = parse_cmd("cd /usr/local").unwrap();
+            let result = cmd.run();
+
+            // This might fail on some systems if /usr/local doesn't exist
+            let current = if result.is_ok() {
+                Some(env::current_dir().unwrap())
+            } else {
+                None
+            };
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            if let Some(current) = current {
+                assert_eq!(current, Path::new("/usr/local"));
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_preserves_trailing_slash() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd /tmp/").unwrap();
+            let result = cmd.run();
+
+            // Should still change to /tmp even with trailing slash
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            assert!(
+                // On macOS, /tmp is a symlink to /private/tmp
+                current == Path::new("/tmp") || current == Path::new("/private/tmp"),
+                "Expected /tmp or /private/tmp, got {:?}",
+                current
+            );
+        }
+
+        #[test]
+        fn cd_is_recognized_as_builtin() {
+            assert!(is_builtin("cd"));
+        }
+
+        #[test]
+        fn cd_command_type_display() {
+            assert_eq!(CommandType::Cd.to_string(), "cd");
         }
     }
 
