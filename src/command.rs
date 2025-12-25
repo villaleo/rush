@@ -627,6 +627,219 @@ mod tests {
         fn cd_command_type_display() {
             assert_eq!(CommandType::Cd.to_string(), "cd");
         }
+
+        #[test]
+        #[serial]
+        fn cd_to_current_directory() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd .").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            assert_eq!(current, original_dir);
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_parent_directory() {
+            let original_dir = env::current_dir().unwrap();
+
+            // First cd to /tmp to have a known starting point
+            env::set_current_dir("/tmp").unwrap();
+
+            let cmd = parse_cmd("cd ..").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            // On macOS, /tmp is /private/tmp, so .. should be /private
+            // On Linux, /tmp/.. should be /
+            assert!(
+                current == Path::new("/") || current == Path::new("/private"),
+                "Expected / or /private, got {:?}",
+                current
+            );
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_grandparent_directory() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Start from a known deep path
+            if Path::new("/usr/local/bin").exists() {
+                env::set_current_dir("/usr/local/bin").unwrap();
+
+                let cmd = parse_cmd("cd ../..").unwrap();
+                let result = cmd.run();
+                let current = env::current_dir().unwrap();
+
+                env::set_current_dir(&original_dir).unwrap();
+
+                assert!(result.is_ok());
+                assert_eq!(current, Path::new("/usr"));
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_relative_subdirectory() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Change to /usr which should have a 'local' subdirectory
+            if Path::new("/usr/local").exists() {
+                env::set_current_dir("/usr").unwrap();
+
+                let cmd = parse_cmd("cd local").unwrap();
+                let result = cmd.run();
+                let current = env::current_dir().unwrap();
+
+                env::set_current_dir(&original_dir).unwrap();
+
+                assert!(result.is_ok());
+                assert_eq!(current, Path::new("/usr/local"));
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_relative_path_with_current_dir() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Change to /usr which should have a 'local' subdirectory
+            if Path::new("/usr/local").exists() {
+                env::set_current_dir("/usr").unwrap();
+
+                let cmd = parse_cmd("cd ./local").unwrap();
+                let result = cmd.run();
+                let current = env::current_dir().unwrap();
+
+                env::set_current_dir(&original_dir).unwrap();
+
+                assert!(result.is_ok());
+                assert_eq!(current, Path::new("/usr/local"));
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_complex_relative_path() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Test navigating up and then down: ../sibling pattern
+            if Path::new("/usr/local").exists() && Path::new("/usr/bin").exists() {
+                env::set_current_dir("/usr/local").unwrap();
+
+                let cmd = parse_cmd("cd ../bin").unwrap();
+                let result = cmd.run();
+                let current = env::current_dir().unwrap();
+
+                env::set_current_dir(&original_dir).unwrap();
+
+                assert!(result.is_ok());
+                assert_eq!(current, Path::new("/usr/bin"));
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_nonexistent_relative_path() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd ./nonexistent_subdir_12345").unwrap();
+            let result = cmd.run();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_err());
+            if let Err(RushError::CommandError { type_, msg, .. }) = result {
+                assert!(matches!(type_, CommandType::Cd));
+                assert!(msg.contains("No such file") || msg.contains("cannot find"));
+            } else {
+                panic!("Expected CommandError");
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_parent_from_root() {
+            let original_dir = env::current_dir().unwrap();
+
+            // cd to root first
+            env::set_current_dir("/").unwrap();
+
+            // Try to go to parent of root (should stay at root)
+            let cmd = parse_cmd("cd ..").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+            assert_eq!(current, Path::new("/"));
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_deeply_nested_relative_path() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Test ../../.. navigation
+            if Path::new("/usr/local/bin").exists() {
+                env::set_current_dir("/usr/local/bin").unwrap();
+
+                let cmd = parse_cmd("cd ../../..").unwrap();
+                let result = cmd.run();
+                let current = env::current_dir().unwrap();
+
+                env::set_current_dir(&original_dir).unwrap();
+
+                assert!(result.is_ok());
+                assert_eq!(current, Path::new("/"));
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_relative_path_multiple_segments() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Navigate to a multi-segment relative path
+            if Path::new("/usr").exists() {
+                env::set_current_dir("/usr").unwrap();
+
+                if Path::new("/usr/local/bin").exists() {
+                    let cmd = parse_cmd("cd local/bin").unwrap();
+                    let result = cmd.run();
+                    let current = env::current_dir().unwrap();
+
+                    env::set_current_dir(&original_dir).unwrap();
+
+                    assert!(result.is_ok());
+                    assert_eq!(current, Path::new("/usr/local/bin"));
+                } else {
+                    env::set_current_dir(&original_dir).unwrap();
+                }
+            } else {
+                env::set_current_dir(&original_dir).unwrap();
+            }
+        }
     }
 
     mod exit_command {
@@ -908,6 +1121,7 @@ mod tests {
 
         #[test]
         fn is_builtin_recognizes_commands() {
+            assert!(is_builtin("cd"));
             assert!(is_builtin("echo"));
             assert!(is_builtin("exit"));
             assert!(is_builtin("type"));
