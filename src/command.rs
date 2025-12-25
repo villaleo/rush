@@ -143,13 +143,13 @@ impl Command {
     }
 
     fn handle_pwd(&self) -> Result<(), RushError> {
-        match find_in_path("pwd")? {
-            Some(ref path) => match self.handle_executable(path, "pwd") {
-                Ok(_status) => Ok(()),
-                Err(error) => Err(error),
-            },
-            None => Err(RushError::CommandNotFound("pwd".into())),
-        }
+        let cwd = env::current_dir().map_err(|error| RushError::CommandError {
+            type_: CommandType::Pwd,
+            msg: error.to_string(),
+            status: error.raw_os_error(),
+        })?;
+        println!("{}", cwd.display());
+        Ok(())
     }
 
     fn handle_type(&self) -> Result<(), RushError> {
