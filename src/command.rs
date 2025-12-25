@@ -1,16 +1,19 @@
 use std::{
     env::{self, split_paths},
-    fmt,
-    io::BufRead,
+    fmt::{self},
+    io::{self, BufRead},
     path::Path,
+    process::{self},
     str::FromStr,
+    thread,
 };
 
 use crate::util::{RushError, tokenize};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum CommandType {
     Echo,
+    Executable { path: String, name: String },
     Exit,
     Type,
     Unknown(String),
@@ -20,6 +23,7 @@ impl fmt::Display for CommandType {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CommandType::Echo => write!(f, "echo"),
+            CommandType::Executable { name, .. } => write!(f, "{}", name),
             CommandType::Exit => write!(f, "exit"),
             CommandType::Type => write!(f, "type"),
             CommandType::Unknown(cmd) => write!(f, "{}", cmd),
@@ -44,7 +48,13 @@ impl Command {
 
         let type_ = CommandType::from_str(name)?;
         match type_ {
-            CommandType::Unknown(cmd) => Err(RushError::CommandNotFound(cmd)),
+            CommandType::Unknown(cmd) => match self::find_in_path(&cmd)? {
+                Some(path) => Ok(Command {
+                    type_: CommandType::Executable { path, name: cmd },
+                    args,
+                }),
+                None => Err(RushError::CommandNotFound(cmd)),
+            },
             _ => Ok(Command { type_, args }),
         }
     }
@@ -52,6 +62,10 @@ impl Command {
     pub(crate) fn run(&self) -> Result<(), RushError> {
         match self.type_ {
             CommandType::Echo => self.handle_echo(),
+            CommandType::Executable { ref path, .. } => match self.handle_executable(&path) {
+                Ok(_status) => Ok(()),
+                Err(error) => Err(error),
+            },
             CommandType::Exit => Ok(()),
             CommandType::Type => self.handle_type(),
             CommandType::Unknown(ref cmd_name) => self.handle_unknown_cmd(cmd_name),
@@ -70,11 +84,70 @@ impl Command {
         Ok(())
     }
 
+    fn handle_executable(&self, path: &str) -> Result<Option<i32>, RushError> {
+        let Some(name) = self.args.first() else {
+            return Err(RushError::CommandNotFound(path.into()));
+        };
+
+        let into_rush_err = |error: io::Error| RushError::CommandError {
+            type_: CommandType::Executable {
+                path: path.into(),
+                name: name.into(),
+            },
+            msg: error.to_string(),
+            status: error.raw_os_error(),
+        };
+
+        let mut child = process::Command::new(path)
+            .args(&self.args[1..])
+            .stdout(process::Stdio::piped())
+            .stderr(process::Stdio::piped())
+            .spawn()
+            .map_err(into_rush_err)?;
+
+        // Take ownership of stdout and stderr
+        let mut child_stdout = child.stdout.take().expect("stdout was piped");
+        let mut child_stderr = child.stderr.take().expect("stderr was piped");
+
+        // Spawn threads to copy output in parallel
+        let stdout_thread = thread::spawn(move || io::copy(&mut child_stdout, &mut io::stdout()));
+        let stderr_thread = thread::spawn(move || io::copy(&mut child_stderr, &mut io::stderr()));
+
+        let status = child.wait().map_err(into_rush_err)?;
+
+        // Wait for output threads to finish
+        stdout_thread
+            .join()
+            .expect("stdout thread panicked")
+            .map_err(into_rush_err)?;
+        stderr_thread
+            .join()
+            .expect("stderr thread panicked")
+            .map_err(into_rush_err)?;
+
+        if status.success() {
+            return Ok(status.code());
+        }
+
+        Err(RushError::CommandError {
+            type_: CommandType::Executable {
+                path: path.into(),
+                name: name.into(),
+            },
+            msg: match status.code() {
+                Some(code) => format!("process exited with code {}", code),
+                None => "process terminated by signal".into(),
+            },
+            status: status.code(),
+        })
+    }
+
     fn handle_type(&self) -> Result<(), RushError> {
         let Some(cmd_name) = self.args.get(1) else {
             return Err(RushError::CommandError {
                 type_: CommandType::Type,
                 msg: "missing argument".into(),
+                status: Some(1),
             });
         };
 
@@ -91,6 +164,7 @@ impl Command {
             None => Err(RushError::CommandError {
                 type_: CommandType::Unknown(cmd_name.into()),
                 msg: "not found".into(),
+                status: Some(1),
             }),
         }
     }
@@ -407,7 +481,8 @@ mod tests {
                 result.unwrap_err(),
                 RushError::CommandError {
                     type_: CommandType::Type,
-                    msg: _
+                    msg: _m,
+                    status: Some(1)
                 }
             ));
         }

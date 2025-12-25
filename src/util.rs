@@ -1,5 +1,4 @@
-use std::io::BufRead;
-
+use std::io::{self};
 use std::vec::Vec;
 
 use thiserror::Error;
@@ -9,7 +8,11 @@ use crate::command::CommandType;
 #[derive(Error, Debug)]
 pub enum RushError {
     #[error("{type_}: {msg}")]
-    CommandError { type_: CommandType, msg: String },
+    CommandError {
+        type_: CommandType,
+        msg: String,
+        status: Option<i32>,
+    },
     #[error("{0}: command not found")]
     CommandNotFound(String),
     #[error("")]
@@ -20,7 +23,7 @@ pub enum RushError {
     UnterminatedQuote,
 }
 
-pub fn tokenize<R: BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
+pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
     let mut input = String::new();
     reader
         .read_line(&mut input)
