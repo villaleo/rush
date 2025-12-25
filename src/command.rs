@@ -1,10 +1,8 @@
 use std::{
-    env::{self, split_paths},
-    fmt::{self},
-    io::{self, BufRead},
+    env::{self},
+    io::{self},
     path::Path,
     process::{self},
-    thread,
 };
 
 use crate::util::{RushError, tokenize};
@@ -20,8 +18,8 @@ pub(crate) enum CommandType {
     Unknown(String),
 }
 
-impl fmt::Display for CommandType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+impl std::fmt::Display for CommandType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CommandType::Cd => write!(f, "cd"),
             CommandType::Echo => write!(f, "echo"),
@@ -41,7 +39,7 @@ pub(crate) struct Command {
 }
 
 impl Command {
-    pub(crate) fn new<R: BufRead>(reader: R) -> Result<Command, RushError> {
+    pub(crate) fn new<R: io::BufRead>(reader: R) -> Result<Command, RushError> {
         let args = tokenize(reader)?;
 
         // Read the name of the command from the tokenized args
@@ -137,6 +135,7 @@ impl Command {
         let mut child_stderr = child.stderr.take().expect("stderr was piped");
 
         // Spawn threads to copy output in parallel
+        use std::thread;
         let stdout_thread = thread::spawn(move || io::copy(&mut child_stdout, &mut io::stdout()));
         let stderr_thread = thread::spawn(move || io::copy(&mut child_stderr, &mut io::stderr()));
 
@@ -254,7 +253,7 @@ fn find_in_path(cmd_name: &str) -> Result<Option<String>, RushError> {
         None => return Ok(None),
     };
 
-    for dir in split_paths(&path_env) {
+    for dir in env::split_paths(&path_env) {
         let full_path = Path::new(&dir).join(cmd_name);
 
         // Check if file exists and is executable

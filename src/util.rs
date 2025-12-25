@@ -1,11 +1,9 @@
 use std::io::{self};
 use std::vec::Vec;
 
-use thiserror::Error;
-
 use crate::command::CommandType;
 
-#[derive(Error, Debug)]
+#[derive(thiserror::Error, Debug)]
 pub enum RushError {
     #[error("{type_}: {msg}")]
     CommandError {
