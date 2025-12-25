@@ -528,6 +528,142 @@ mod tests {
         }
     }
 
+    mod executable_commands {
+        use super::*;
+
+        // Helper to create a Command with an executable type
+        fn create_executable_command(path: &str, args: Vec<String>) -> Command {
+            Command {
+                type_: CommandType::Executable {
+                    path: path.to_string(),
+                    name: args[0].clone(),
+                },
+                args,
+            }
+        }
+
+        #[test]
+        fn test_successful_execution() {
+            // Use 'true' command which always exits with 0
+            let cmd = create_executable_command("/usr/bin/true", vec!["true".to_string()]);
+
+            let result = cmd.handle_executable("/usr/bin/true");
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), Some(0));
+        }
+
+        #[test]
+        fn test_failed_execution() {
+            // Use 'false' command which always exits with 1
+            let cmd = create_executable_command("/usr/bin/false", vec!["false".to_string()]);
+
+            let result = cmd.handle_executable("/usr/bin/false");
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { status, .. }) = result {
+                assert_eq!(status, Some(1));
+            } else {
+                panic!("Expected CommandError");
+            }
+        }
+
+        #[test]
+        fn test_nonexistent_executable() {
+            let cmd = create_executable_command(
+                "/nonexistent/path/to/binary",
+                vec!["binary".to_string()],
+            );
+
+            let result = cmd.handle_executable("/nonexistent/path/to/binary");
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { msg, .. }) = result {
+                assert!(msg.contains("No such file") || msg.contains("cannot find"));
+            } else {
+                panic!("Expected CommandError");
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn test_permission_denied() {
+            // Try to execute a file without execute permissions
+            use std::fs;
+            use std::os::unix::fs::PermissionsExt;
+
+            let temp_file = "/tmp/rush_test_no_exec";
+            fs::write(temp_file, "#!/bin/sh\necho test").unwrap();
+
+            // Set permissions to read-only
+            let mut perms = fs::metadata(temp_file).unwrap().permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(temp_file, perms).unwrap();
+
+            let cmd = create_executable_command(temp_file, vec!["rush_test_no_exec".to_string()]);
+
+            let result = cmd.handle_executable(temp_file);
+            assert!(result.is_err());
+
+            // Cleanup
+            fs::remove_file(temp_file).ok();
+        }
+
+        #[test]
+        fn test_empty_args_returns_error() {
+            let cmd = Command {
+                type_: CommandType::Executable {
+                    path: "/usr/bin/true".to_string(),
+                    name: "true".to_string(),
+                },
+                args: vec![], // Empty args
+            };
+
+            let result = cmd.handle_executable("/usr/bin/true");
+            assert!(result.is_err());
+        }
+
+        #[test]
+        fn test_exit_code_propagation() {
+            // Use sh to exit with a specific code
+            let cmd = create_executable_command(
+                "/bin/sh",
+                vec!["sh".to_string(), "-c".to_string(), "exit 42".to_string()],
+            );
+
+            let result = cmd.handle_executable("/bin/sh");
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { status, .. }) = result {
+                assert_eq!(status, Some(42));
+            } else {
+                panic!("Expected CommandError with exit code 42");
+            }
+        }
+
+        #[cfg(unix)]
+        #[test]
+        fn test_signal_termination() {
+            // This test requires creating a process that gets killed by a signal
+            // Skip this in CI or make it conditional.
+
+            let cmd = create_executable_command(
+                "/bin/sh",
+                vec!["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()],
+            );
+
+            let result = cmd.handle_executable("/bin/sh");
+            assert!(result.is_err());
+
+            if let Err(RushError::CommandError { status, msg, .. }) = result {
+                // When killed by signal, exit code is None
+                assert_eq!(status, None);
+                assert!(msg.contains("signal") || msg.contains("terminated"));
+            } else {
+                panic!("Expected CommandError from signal");
+            }
+        }
+    }
+
     mod path_utilities {
         use super::*;
 
