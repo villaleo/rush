@@ -656,23 +656,71 @@ mod tests {
         #[cfg(unix)]
         #[test]
         fn test_signal_termination() {
-            // This test requires creating a process that gets killed by a signal
-            // Skip this in CI or make it conditional.
+            if env::var_os("PATH").is_some() {
+                if let Ok(Some(ref shell_path)) = find_in_path("sh") {
+                    let cmd = create_executable_command(
+                        shell_path,
+                        vec!["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()],
+                    );
 
-            let cmd = create_executable_command(
-                "/bin/sh",
-                vec!["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()],
-            );
+                    let result = cmd.handle_executable(shell_path, "sh");
+                    assert!(result.is_err());
 
-            let result = cmd.handle_executable("/bin/sh", "sh");
+                    if let Err(RushError::CommandError { status, msg, .. }) = result {
+                        // When killed by signal, exit code is None
+                        assert_eq!(status, None);
+                        assert!(msg.contains("signal") || msg.contains("terminated"));
+                    } else {
+                        panic!("Expected CommandError from signal");
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_integration_parse_and_run_executable() {
+            if env::var_os("PATH").is_some() {
+                let cmd = parse_cmd("true").unwrap();
+                assert!(matches!(cmd.type_, CommandType::Executable { .. }));
+
+                let result = cmd.run();
+                assert!(result.is_ok());
+            }
+        }
+
+        #[test]
+        fn test_integration_executable_with_arguments() {
+            if env::var_os("PATH").is_some() {
+                // Use 'echo' from PATH (not the builtin, but /bin/echo)
+                if let Ok(Some(echo_path)) = find_in_path("echo") {
+                    // Skip this test if echo is not found as a separate executable
+                    if echo_path.starts_with("/") {
+                        let input = format!("{} hello world", echo_path);
+                        let cmd = parse_cmd(&input).unwrap();
+
+                        if let CommandType::Executable { ref name, .. } = cmd.type_ {
+                            assert!(name.contains("echo"));
+                            assert_eq!(cmd.args.len(), 3); // echo, hello, world
+                        } else {
+                            panic!("Expected Executable type");
+                        }
+
+                        let result = cmd.run();
+                        assert!(result.is_ok());
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_integration_executable_not_in_path() {
+            let result = parse_cmd("definitely_nonexistent_command_831");
             assert!(result.is_err());
 
-            if let Err(RushError::CommandError { status, msg, .. }) = result {
-                // When killed by signal, exit code is None
-                assert_eq!(status, None);
-                assert!(msg.contains("signal") || msg.contains("terminated"));
+            if let Err(RushError::CommandNotFound(name)) = result {
+                assert_eq!(name, "definitely_nonexistent_command_831");
             } else {
-                panic!("Expected CommandError from signal");
+                panic!("Expected CommandNotFound error");
             }
         }
     }
