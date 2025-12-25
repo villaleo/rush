@@ -78,27 +78,37 @@ impl Command {
     }
 
     fn handle_cd(&self) -> Result<(), RushError> {
-        if let Some(target_dir) = &self.args.get(1) {
-            return env::set_current_dir(&Path::new(target_dir)).map_err(|error| {
-                RushError::CommandError {
-                    type_: CommandType::Cd,
-                    msg: format!("{}: No such file or directory", target_dir),
-                    status: error.raw_os_error(),
-                }
-            });
+        // A helper function that attempts to cd to the HOME directory
+        fn cd_home_dir() -> Result<(), RushError> {
+            let home_dir = env::home_dir().ok_or_else(|| RushError::CommandError {
+                type_: CommandType::Cd,
+                msg: "failed to locate home directory".into(),
+                status: Some(1),
+            })?;
+
+            env::set_current_dir(&Path::new(&home_dir)).map_err(|error| RushError::CommandError {
+                type_: CommandType::Cd,
+                msg: error.to_string(),
+                status: error.raw_os_error(),
+            })
         }
 
-        let home_dir = env::home_dir().ok_or_else(|| RushError::CommandError {
-            type_: CommandType::Cd,
-            msg: "failed to locate home directory".into(),
-            status: Some(1),
-        })?;
+        if let Some(target_dir) = &self.args.get(1) {
+            return match target_dir.as_str() {
+                "~" => cd_home_dir(),
+                target_dir => {
+                    return env::set_current_dir(&Path::new(target_dir)).map_err(|error| {
+                        RushError::CommandError {
+                            type_: CommandType::Cd,
+                            msg: format!("{}: No such file or directory", target_dir),
+                            status: error.raw_os_error(),
+                        }
+                    });
+                }
+            };
+        }
 
-        env::set_current_dir(&Path::new(&home_dir)).map_err(|error| RushError::CommandError {
-            type_: CommandType::Cd,
-            msg: error.to_string(),
-            status: error.raw_os_error(),
-        })
+        cd_home_dir()
     }
 
     fn handle_echo(&self) -> Result<(), RushError> {
@@ -839,6 +849,96 @@ mod tests {
             } else {
                 env::set_current_dir(&original_dir).unwrap();
             }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_home_with_tilde() {
+            let original_dir = env::current_dir().unwrap();
+
+            let cmd = parse_cmd("cd ~").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+
+            // Verify we're in the home directory
+            if let Some(home) = env::home_dir() {
+                assert_eq!(current, home);
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_with_no_args_goes_to_home() {
+            let original_dir = env::current_dir().unwrap();
+
+            // First cd somewhere else
+            env::set_current_dir("/tmp").unwrap();
+
+            let cmd = parse_cmd("cd").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+
+            // Verify we're in the home directory
+            if let Some(home) = env::home_dir() {
+                assert_eq!(current, home);
+            }
+        }
+
+        #[test]
+        fn cd_tilde_parsing() {
+            let cmd = parse_cmd("cd ~").unwrap();
+            assert!(matches!(cmd.type_, CommandType::Cd));
+            assert_eq!(cmd.args, vec!["cd", "~"]);
+        }
+
+        #[test]
+        #[serial]
+        fn cd_to_home_from_different_directory() {
+            let original_dir = env::current_dir().unwrap();
+
+            // Start from a known directory
+            env::set_current_dir("/").unwrap();
+
+            let cmd = parse_cmd("cd ~").unwrap();
+            let result = cmd.run();
+            let current = env::current_dir().unwrap();
+
+            env::set_current_dir(&original_dir).unwrap();
+
+            assert!(result.is_ok());
+
+            // Verify we changed from / to home
+            if let Some(home) = env::home_dir() {
+                assert_eq!(current, home);
+                assert_ne!(current, Path::new("/"));
+            }
+        }
+
+        #[test]
+        #[serial]
+        fn cd_tilde_multiple_times() {
+            let original_dir = env::current_dir().unwrap();
+
+            // cd ~ should work multiple times
+            for _ in 0..3 {
+                let cmd = parse_cmd("cd ~").unwrap();
+                let result = cmd.run();
+                assert!(result.is_ok());
+
+                if let Some(home) = env::home_dir() {
+                    assert_eq!(env::current_dir().unwrap(), home);
+                }
+            }
+
+            env::set_current_dir(&original_dir).unwrap();
         }
     }
 
