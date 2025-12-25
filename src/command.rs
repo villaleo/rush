@@ -62,10 +62,12 @@ impl Command {
     pub(crate) fn run(&self) -> Result<(), RushError> {
         match self.type_ {
             CommandType::Echo => self.handle_echo(),
-            CommandType::Executable { ref path, .. } => match self.handle_executable(&path) {
-                Ok(_status) => Ok(()),
-                Err(error) => Err(error),
-            },
+            CommandType::Executable { ref path, ref name } => {
+                match self.handle_executable(&path, &name) {
+                    Ok(_status) => Ok(()),
+                    Err(error) => Err(error),
+                }
+            }
             CommandType::Exit => Ok(()),
             CommandType::Type => self.handle_type(),
             CommandType::Unknown(ref cmd_name) => self.handle_unknown_cmd(cmd_name),
@@ -84,11 +86,7 @@ impl Command {
         Ok(())
     }
 
-    fn handle_executable(&self, path: &str) -> Result<Option<i32>, RushError> {
-        let Some(name) = self.args.first() else {
-            return Err(RushError::CommandNotFound(path.into()));
-        };
-
+    fn handle_executable(&self, path: &str, name: &str) -> Result<Option<i32>, RushError> {
         let into_rush_err = |error: io::Error| RushError::CommandError {
             type_: CommandType::Executable {
                 path: path.into(),
@@ -98,7 +96,7 @@ impl Command {
             status: error.raw_os_error(),
         };
 
-        let mut child = process::Command::new(path)
+        let mut child = process::Command::new(name)
             .args(&self.args[1..])
             .stdout(process::Stdio::piped())
             .stderr(process::Stdio::piped())
@@ -547,7 +545,7 @@ mod tests {
             // Use 'true' command which always exits with 0
             let cmd = create_executable_command("/usr/bin/true", vec!["true".to_string()]);
 
-            let result = cmd.handle_executable("/usr/bin/true");
+            let result = cmd.handle_executable("/usr/bin/true", "true");
             assert!(result.is_ok());
             assert_eq!(result.unwrap(), Some(0));
         }
@@ -557,7 +555,7 @@ mod tests {
             // Use 'false' command which always exits with 1
             let cmd = create_executable_command("/usr/bin/false", vec!["false".to_string()]);
 
-            let result = cmd.handle_executable("/usr/bin/false");
+            let result = cmd.handle_executable("/usr/bin/false", "false");
             assert!(result.is_err());
 
             if let Err(RushError::CommandError { status, .. }) = result {
@@ -574,7 +572,7 @@ mod tests {
                 vec!["binary".to_string()],
             );
 
-            let result = cmd.handle_executable("/nonexistent/path/to/binary");
+            let result = cmd.handle_executable("/nonexistent/path/to/binary", "binary");
             assert!(result.is_err());
 
             if let Err(RushError::CommandError { msg, .. }) = result {
@@ -601,25 +599,11 @@ mod tests {
 
             let cmd = create_executable_command(temp_file, vec!["rush_test_no_exec".to_string()]);
 
-            let result = cmd.handle_executable(temp_file);
+            let result = cmd.handle_executable(temp_file, "rush_test_no_exec");
             assert!(result.is_err());
 
             // Cleanup
             fs::remove_file(temp_file).ok();
-        }
-
-        #[test]
-        fn test_empty_args_returns_error() {
-            let cmd = Command {
-                type_: CommandType::Executable {
-                    path: "/usr/bin/true".to_string(),
-                    name: "true".to_string(),
-                },
-                args: vec![], // Empty args
-            };
-
-            let result = cmd.handle_executable("/usr/bin/true");
-            assert!(result.is_err());
         }
 
         #[test]
@@ -630,7 +614,7 @@ mod tests {
                 vec!["sh".to_string(), "-c".to_string(), "exit 42".to_string()],
             );
 
-            let result = cmd.handle_executable("/bin/sh");
+            let result = cmd.handle_executable("/bin/sh", "sh");
             assert!(result.is_err());
 
             if let Err(RushError::CommandError { status, .. }) = result {
@@ -651,7 +635,7 @@ mod tests {
                 vec!["sh".to_string(), "-c".to_string(), "kill -9 $$".to_string()],
             );
 
-            let result = cmd.handle_executable("/bin/sh");
+            let result = cmd.handle_executable("/bin/sh", "sh");
             assert!(result.is_err());
 
             if let Err(RushError::CommandError { status, msg, .. }) = result {
