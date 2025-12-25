@@ -21,7 +21,7 @@ fn rush() -> Result<(), RushError> {
     cmd.run()
 }
 
-fn main() -> Result<(), RushError> {
+fn main() {
     loop {
         if let Err(error) = rush() {
             match error {
