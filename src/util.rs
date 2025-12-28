@@ -35,7 +35,7 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
 
     for (i, char) in input_tokens.chars().enumerate() {
         match char {
-            '"' => {
+            '\'' => {
                 quote_count += 1;
 
                 // Push buf to tokens when more than 1 quote is found
@@ -45,15 +45,10 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
                     quote_count = 0;
                 }
             }
-            char => {
-                // At the end, an odd num of quotes means a quote wasn't terminated
-                if i == input_tokens.len() - 1 && quote_count % 2 == 1 {
-                    return Err(RushError::UnterminatedQuote);
-                }
-
+            ' ' => {
                 // If we haven't seen a quote yet and we encounter a space, push buf
                 // into tokens and clear buf
-                if quote_count == 0 && char == ' ' {
+                if quote_count == 0 {
                     // Skip over empty tokens
                     if buf.trim().is_empty() {
                         continue;
@@ -64,7 +59,14 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
                     continue;
                 }
 
-                // Push the current char into buf
+                buf.push(' ');
+            }
+            char => {
+                // At the end, an odd num of quotes means a quote wasn't terminated
+                if i == input_tokens.len() - 1 && quote_count % 2 == 1 {
+                    return Err(RushError::UnterminatedQuote);
+                }
+
                 buf.push(char);
 
                 // At the end, push any remaining chars into tokens
@@ -138,7 +140,7 @@ mod tests {
         #[test]
         fn simple_quoted_string() {
             assert_eq!(
-                parse("echo \"hello world\"\n").unwrap(),
+                parse("echo \'hello world\'\n").unwrap(),
                 vec!["echo", "hello world"]
             );
         }
@@ -146,7 +148,7 @@ mod tests {
         #[test]
         fn multiple_quoted_strings() {
             assert_eq!(
-                parse("\"first\" \"second\" \"third\"\n").unwrap(),
+                parse("\'first\' \'second\' \'third\'\n").unwrap(),
                 vec!["first", "second", "third"]
             );
         }
@@ -154,7 +156,7 @@ mod tests {
         #[test]
         fn preserves_spaces_in_quotes() {
             assert_eq!(
-                parse("echo \"two  spaces\"   and  some \"mo re\"\n").unwrap(),
+                parse("echo \'two  spaces\'   and  some \'mo re\'\n").unwrap(),
                 vec!["echo", "two  spaces", "and", "some", "mo re"]
             );
         }
@@ -162,26 +164,26 @@ mod tests {
         #[test]
         fn single_quoted_token() {
             assert_eq!(
-                parse("\"single quoted token\"\n").unwrap(),
+                parse("\'single quoted token\'\n").unwrap(),
                 vec!["single quoted token"]
             );
         }
 
         #[test]
         fn empty_quoted_strings() {
-            assert_eq!(parse("\"\"\n").unwrap(), vec![""]);
-            assert_eq!(parse("echo \"\"\n").unwrap(), vec!["echo", ""]);
-            assert_eq!(parse("\"\" \"\" \"\"\n").unwrap(), vec!["", "", ""]);
+            assert_eq!(parse("\'\'\n").unwrap(), vec![""]);
+            assert_eq!(parse("echo \'\'\n").unwrap(), vec!["echo", ""]);
+            assert_eq!(parse("\'\' \'\' \'\'\n").unwrap(), vec!["", "", ""]);
         }
 
         #[test]
         fn quotes_with_special_characters() {
             assert_eq!(
-                parse("echo \"hello!@#$%^&*()world\"\n").unwrap(),
+                parse("echo \'hello!@#$%^&*()world\'\n").unwrap(),
                 vec!["echo", "hello!@#$%^&*()world"]
             );
             assert_eq!(
-                parse("echo \"path/to/file\"\n").unwrap(),
+                parse("echo \'path/to/file\'\n").unwrap(),
                 vec!["echo", "path/to/file"]
             );
         }
@@ -189,25 +191,25 @@ mod tests {
         #[test]
         fn mixed_quoted_and_unquoted() {
             assert_eq!(
-                parse("cp \"source file\" dest\n").unwrap(),
+                parse("cp \'source file\' dest\n").unwrap(),
                 vec!["cp", "source file", "dest"]
             );
             assert_eq!(
-                parse("command arg1 \"quoted arg\" arg2 \"another quoted\"\n").unwrap(),
+                parse("command arg1 \'quoted arg\' arg2 \'another quoted\'\n").unwrap(),
                 vec!["command", "arg1", "quoted arg", "arg2", "another quoted"]
             );
         }
 
         #[test]
         fn consecutive_quotes() {
-            assert_eq!(parse("\"\"\"\" \n").unwrap(), vec!["", ""]);
-            assert_eq!(parse("\"a\"\"b\"\n").unwrap(), vec!["a", "b"]);
+            assert_eq!(parse("\'\'\'\' \n").unwrap(), vec!["", ""]);
+            assert_eq!(parse("\'a\'\'b\'\n").unwrap(), vec!["a", "b"]);
         }
 
         #[test]
         fn quotes_at_start() {
             assert_eq!(
-                parse("\"start\" middle end\n").unwrap(),
+                parse("\'start\' middle end\n").unwrap(),
                 vec!["start", "middle", "end"]
             );
         }
@@ -215,25 +217,25 @@ mod tests {
         #[test]
         fn quotes_at_end() {
             assert_eq!(
-                parse("start middle \"end\"\n").unwrap(),
+                parse("start middle \'end\'\n").unwrap(),
                 vec!["start", "middle", "end"]
             );
         }
 
         #[test]
         fn only_quoted_token() {
-            assert_eq!(parse("\"only\"\n").unwrap(), vec!["only"]);
+            assert_eq!(parse("\'only\'\n").unwrap(), vec!["only"]);
         }
 
         #[test]
         fn single_char_quoted() {
-            assert_eq!(parse("\"a\" \"b\" \"c\"\n").unwrap(), vec!["a", "b", "c"]);
+            assert_eq!(parse("\'a\' \'b\' \'c\'\n").unwrap(), vec!["a", "b", "c"]);
         }
 
         #[test]
         fn quoted_pattern_for_grep() {
             assert_eq!(
-                parse("grep \"pattern\" file.txt\n").unwrap(),
+                parse("grep \'pattern\' file.txt\n").unwrap(),
                 vec!["grep", "pattern", "file.txt"]
             );
         }
@@ -293,7 +295,7 @@ mod tests {
         #[test]
         fn very_long_quoted_token() {
             let long_token = "a".repeat(1000);
-            let long_quoted = format!("echo \"{}\"\n", long_token);
+            let long_quoted = format!("echo \'{}\'\n", long_token);
             assert_eq!(parse(&long_quoted).unwrap(), vec!["echo", &long_token]);
         }
     }
@@ -304,7 +306,7 @@ mod tests {
         #[test]
         fn unterminated_quote_at_end() {
             assert!(matches!(
-                parse("echo \"hello world\n").unwrap_err(),
+                parse("echo \'hello world\n").unwrap_err(),
                 RushError::UnterminatedQuote
             ));
         }
@@ -312,7 +314,7 @@ mod tests {
         #[test]
         fn unterminated_quote_at_start() {
             assert!(matches!(
-                parse("\"unterminated\n").unwrap_err(),
+                parse("\'unterminated\n").unwrap_err(),
                 RushError::UnterminatedQuote
             ));
         }
@@ -320,7 +322,7 @@ mod tests {
         #[test]
         fn unterminated_quote_after_valid_quotes() {
             assert!(matches!(
-                parse("cmd \"arg1\" \"unterminated\n").unwrap_err(),
+                parse("cmd \'arg1\' \'unterminated\n").unwrap_err(),
                 RushError::UnterminatedQuote
             ));
         }

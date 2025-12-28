@@ -43,14 +43,14 @@ mod tests {
 
     #[test]
     fn quoted_args() {
-        let cmd = parse_cmd("echo \"hello world\" test").unwrap();
+        let cmd = parse_cmd("echo \'hello world\' test").unwrap();
         assert!(cmd.run().is_ok());
         assert_eq!(cmd.args, vec!["echo", "hello world", "test"]);
     }
 
     #[test]
     fn empty_quoted_string() {
-        let cmd = parse_cmd("echo \"\"").unwrap();
+        let cmd = parse_cmd("echo \'\'").unwrap();
         assert!(cmd.run().is_ok());
         assert_eq!(cmd.args, vec!["echo", ""]);
     }
