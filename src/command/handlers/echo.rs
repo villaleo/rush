@@ -52,7 +52,7 @@ mod tests {
     fn empty_quoted_string() {
         let cmd = parse_cmd("echo \'\'").unwrap();
         assert!(cmd.run().is_ok());
-        assert_eq!(cmd.args, vec!["echo", ""]);
+        assert_eq!(cmd.args, vec!["echo"]);
     }
 
     #[test]

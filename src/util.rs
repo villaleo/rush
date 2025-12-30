@@ -30,7 +30,12 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
     let input_tokens = input.trim();
     let buf = &mut String::new();
 
-    let mut tokens = Vec::new();
+    enum TokenKind {
+        Literal(String),
+        Quoted(String),
+    }
+
+    let mut tokens = Vec::<TokenKind>::new();
     let mut quote_count = 0;
 
     for (i, char) in input_tokens.chars().enumerate() {
@@ -40,7 +45,19 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
 
                 // Push buf to tokens when more than 1 quote is found
                 if quote_count > 1 {
-                    tokens.push(buf.clone());
+                    // Ignore empty quoted tokens
+                    if buf.len() == 0 {
+                        quote_count = 0;
+                        continue;
+                    }
+
+                    // Concatenate consecutive quoted tokens
+                    if let Some(TokenKind::Quoted(last_token)) = tokens.last_mut() {
+                        last_token.push_str(&buf.clone());
+                    } else {
+                        tokens.push(TokenKind::Quoted(buf.clone()));
+                    }
+
                     buf.clear();
                     quote_count = 0;
                 }
@@ -54,7 +71,7 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
                         continue;
                     }
 
-                    tokens.push(buf.trim().to_string());
+                    tokens.push(TokenKind::Literal(buf.trim().into()));
                     buf.clear();
                     continue;
                 }
@@ -67,17 +84,24 @@ pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError>
                     return Err(RushError::UnterminatedQuote);
                 }
 
+                // Push the current char into buf
                 buf.push(char);
 
                 // At the end, push any remaining chars into tokens
                 if i == input_tokens.len() - 1 && buf.len() > 0 {
-                    tokens.push(buf.clone());
+                    tokens.push(TokenKind::Literal(buf.trim().into()));
                 }
             }
         }
     }
 
-    Ok(tokens)
+    Ok(tokens
+        .iter()
+        .map(|token| match token {
+            TokenKind::Literal(literal) => literal.to_owned(),
+            TokenKind::Quoted(quoted) => quoted.to_owned(),
+        })
+        .collect::<Vec<_>>())
 }
 
 #[cfg(test)]
@@ -146,10 +170,10 @@ mod tests {
         }
 
         #[test]
-        fn multiple_quoted_strings() {
+        fn consecutive_quoted_strings_are_concatenated() {
             assert_eq!(
                 parse("\'first\' \'second\' \'third\'\n").unwrap(),
-                vec!["first", "second", "third"]
+                vec!["firstsecondthird"]
             );
         }
 
@@ -171,9 +195,9 @@ mod tests {
 
         #[test]
         fn empty_quoted_strings() {
-            assert_eq!(parse("\'\'\n").unwrap(), vec![""]);
-            assert_eq!(parse("echo \'\'\n").unwrap(), vec!["echo", ""]);
-            assert_eq!(parse("\'\' \'\' \'\'\n").unwrap(), vec!["", "", ""]);
+            assert_eq!(parse("\'\'\n").unwrap(), Vec::<&str>::new());
+            assert_eq!(parse("echo \'\'\n").unwrap(), vec!["echo"]);
+            assert_eq!(parse("\'\' \'\' \'\'\n").unwrap(), Vec::<&str>::new());
         }
 
         #[test]
@@ -202,8 +226,8 @@ mod tests {
 
         #[test]
         fn consecutive_quotes() {
-            assert_eq!(parse("\'\'\'\' \n").unwrap(), vec!["", ""]);
-            assert_eq!(parse("\'a\'\'b\'\n").unwrap(), vec!["a", "b"]);
+            assert_eq!(parse("\'\'\'\' \n").unwrap(), Vec::<&str>::new());
+            assert_eq!(parse("\'a\'\'b\'\n").unwrap(), vec!["ab"]);
         }
 
         #[test]
@@ -229,7 +253,7 @@ mod tests {
 
         #[test]
         fn single_char_quoted() {
-            assert_eq!(parse("\'a\' \'b\' \'c\'\n").unwrap(), vec!["a", "b", "c"]);
+            assert_eq!(parse("\'a\' \'b\' \'c\'\n").unwrap(), vec!["abc"]);
         }
 
         #[test]
