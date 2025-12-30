@@ -3,7 +3,7 @@ pub(crate) mod path;
 
 use std::io;
 
-use crate::util::{tokenize, RushError};
+use crate::util::{RushError, tokenize};
 
 use self::{
     handlers::{handle_cd, handle_echo, handle_executable, handle_pwd, handle_type},
@@ -94,7 +94,11 @@ impl Command {
     }
 
     #[cfg(test)]
-    pub(crate) fn handle_executable(&self, path: &str, name: &str) -> Result<Option<i32>, RushError> {
+    pub(crate) fn handle_executable(
+        &self,
+        path: &str,
+        name: &str,
+    ) -> Result<Option<i32>, RushError> {
         handle_executable(path, name, &self.args)
     }
 }
@@ -249,7 +253,7 @@ mod tests {
 
         #[test]
         fn quoted_arguments_preserved() {
-            let cmd = parse_cmd("echo \"hello world\"").unwrap();
+            let cmd = parse_cmd("echo \'hello world\'").unwrap();
             assert_eq!(cmd.args, vec!["echo", "hello world"]);
         }
 
