@@ -3,7 +3,7 @@ pub(crate) mod path;
 
 use std::io;
 
-use crate::util::{RushError, tokenize};
+use crate::util::{RushError, Tokenizer};
 
 use self::{
     handlers::{handle_cd, handle_echo, handle_executable, handle_pwd, handle_type},
@@ -56,7 +56,8 @@ pub(crate) struct Command {
 
 impl Command {
     pub(crate) fn new<R: io::BufRead>(reader: R) -> Result<Command, RushError> {
-        let args = tokenize(reader)?;
+        let mut tokenizer = Tokenizer::from(reader)?;
+        let args = tokenizer.tokenize()?;
 
         // Read the name of the command from the tokenized args
         let Some(name) = args.first() else {
