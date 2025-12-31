@@ -21,87 +21,168 @@ pub enum RushError {
     UnterminatedQuote,
 }
 
-pub fn tokenize<R: io::BufRead>(mut reader: R) -> Result<Vec<String>, RushError> {
-    let mut input = String::new();
-    reader
-        .read_line(&mut input)
-        .map_err(|_| RushError::UnexpectedEOF)?;
+#[derive(Debug)]
+enum TokenKind {
+    Literal(String),
+    Quoted(String),
+    Space,
+}
 
-    let input_tokens = input.trim();
-    let buf = &mut String::new();
+#[derive(Debug)]
+pub struct Tokenizer {
+    input: String,
+    tokens: Vec<TokenKind>,
+}
 
-    enum TokenKind {
-        Literal(String),
-        Quoted(String),
+impl Tokenizer {
+    pub fn from<R>(mut reader: R) -> Result<Self, RushError>
+    where
+        R: io::BufRead,
+    {
+        let mut input = String::new();
+        reader
+            .read_line(&mut input)
+            .map_err(|_| RushError::UnexpectedEOF)?;
+
+        Ok(Self {
+            input: input.trim().to_owned(),
+            tokens: Vec::new(),
+        })
     }
 
-    let mut tokens = Vec::<TokenKind>::new();
-    let mut quote_count = 0;
+    pub fn tokenize(&mut self) -> Result<Vec<String>, RushError> {
+        let buf = &mut String::new();
+        let mut quote_count = 0;
+        let mut has_seen_literal = false;
 
-    for (i, char) in input_tokens.chars().enumerate() {
-        match char {
-            '\'' => {
-                quote_count += 1;
+        for (i, char) in self.input.chars().enumerate() {
+            match char {
+                '\'' => {
+                    quote_count += 1;
 
-                // Push buf to tokens when more than 1 quote is found
-                if quote_count > 1 {
-                    // Ignore empty quoted tokens
-                    if buf.len() == 0 {
+                    if quote_count == 1 {
+                        // If there's content in buf, push it as a Literal before
+                        // starting the quoted string
+                        if !buf.trim().is_empty() {
+                            has_seen_literal = true;
+                            self.tokens.push(TokenKind::Literal(buf.trim().into()));
+                        }
+                        buf.clear();
+                        continue;
+                    }
+
+                    if quote_count == 2 {
+                        // Ignore empty quoted tokens
+                        if buf.trim().len() == 0 {
+                            buf.clear();
+                            quote_count = 0;
+                            continue;
+                        }
+
+                        // Concatenate consecutive tokens (only if last token is NOT Space)
+                        if !matches!(self.tokens.last(), Some(TokenKind::Space)) {
+                            match self.tokens.last_mut() {
+                                Some(TokenKind::Quoted(last_token)) => {
+                                    last_token.push_str(&buf.clone());
+                                    buf.clear();
+                                    quote_count = 0;
+                                    continue;
+                                }
+                                Some(TokenKind::Literal(last_token)) => {
+                                    last_token.push_str(&buf.clone());
+                                    // Convert the Literal to a Quoted since it now contains quoted content
+                                    let combined = last_token.clone();
+                                    self.tokens.pop();
+                                    self.tokens.push(TokenKind::Quoted(combined));
+                                    buf.clear();
+                                    quote_count = 0;
+                                    continue;
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // There's a Space before this quoted string, so pop it before adding the new token
+                            self.tokens.pop();
+                        }
+
+                        self.tokens.push(TokenKind::Quoted(buf.clone()));
+
+                        buf.clear();
                         quote_count = 0;
+                    }
+                }
+                ' ' => {
+                    if quote_count == 0 {
+                        // Skip over empty tokens
+                        if buf.trim().is_empty() {
+                            buf.clear();
+                            // Push Space token after Literals, OR after Quoted if we've seen a literal before
+                            // This allows pure quoted strings to concatenate, but separates tokens when literals are involved
+                            if matches!(self.tokens.last(), Some(TokenKind::Literal(_))) {
+                                self.tokens.push(TokenKind::Space);
+                            } else if has_seen_literal
+                                && matches!(self.tokens.last(), Some(TokenKind::Quoted(_)))
+                            {
+                                self.tokens.push(TokenKind::Space);
+                            }
+                            continue;
+                        }
+
+                        // Since we aren't processing a quoted string, push the buf into
+                        // self.tokens as a Literal token
+                        has_seen_literal = true;
+                        self.tokens.push(TokenKind::Literal(buf.trim().into()));
+                        // Push a Space token after the Literal token to help the state machine
+                        // determine whether to concatenate or not
+                        self.tokens.push(TokenKind::Space);
+
+                        buf.clear();
                         continue;
                     }
 
-                    // Concatenate consecutive quoted tokens
-                    if let Some(TokenKind::Quoted(last_token)) = tokens.last_mut() {
-                        last_token.push_str(&buf.clone());
-                    } else {
-                        tokens.push(TokenKind::Quoted(buf.clone()));
+                    // We push a space into buf if we're processing a quoted string
+                    buf.push(' ');
+                }
+                char => {
+                    // At the end, an odd num of quotes means a quote wasn't terminated
+                    if i == self.input.len() - 1 && quote_count % 2 == 1 {
+                        return Err(RushError::UnterminatedQuote);
                     }
 
-                    buf.clear();
-                    quote_count = 0;
-                }
-            }
-            ' ' => {
-                // If we haven't seen a quote yet and we encounter a space, push buf
-                // into tokens and clear buf
-                if quote_count == 0 {
-                    // Skip over empty tokens
-                    if buf.trim().is_empty() {
-                        continue;
-                    }
-
-                    tokens.push(TokenKind::Literal(buf.trim().into()));
-                    buf.clear();
-                    continue;
-                }
-
-                buf.push(' ');
-            }
-            char => {
-                // At the end, an odd num of quotes means a quote wasn't terminated
-                if i == input_tokens.len() - 1 && quote_count % 2 == 1 {
-                    return Err(RushError::UnterminatedQuote);
-                }
-
-                // Push the current char into buf
-                buf.push(char);
-
-                // At the end, push any remaining chars into tokens
-                if i == input_tokens.len() - 1 && buf.len() > 0 {
-                    tokens.push(TokenKind::Literal(buf.trim().into()));
+                    // Push the current char into buf
+                    buf.push(char);
                 }
             }
         }
-    }
 
-    Ok(tokens
-        .iter()
-        .map(|token| match token {
-            TokenKind::Literal(literal) => literal.to_owned(),
-            TokenKind::Quoted(quoted) => quoted.to_owned(),
-        })
-        .collect::<Vec<_>>())
+        // Push remaining chars into self.tokens
+        if buf.len() > 0 {
+            // Concatenate with the last token if it's a Literal or Quoted (no Space between)
+            match self.tokens.last_mut() {
+                Some(TokenKind::Literal(last_token)) => {
+                    last_token.push_str(buf.trim());
+                }
+                Some(TokenKind::Quoted(last_token)) => {
+                    last_token.push_str(buf.trim());
+                }
+                _ => {
+                    self.tokens.push(TokenKind::Literal(buf.trim().into()));
+                }
+            }
+        }
+
+        let mut tokens = Vec::<String>::new();
+
+        for token in &self.tokens {
+            match token {
+                TokenKind::Literal(literal) => tokens.push(literal.to_owned()),
+                TokenKind::Quoted(quoted) => tokens.push(quoted.to_owned()),
+                TokenKind::Space => { /* state machine hint */ }
+            }
+        }
+
+        Ok(tokens)
+    }
 }
 
 #[cfg(test)]
@@ -111,7 +192,8 @@ mod tests {
 
     // Shared test helper
     fn parse(input: &str) -> Result<Vec<String>, RushError> {
-        tokenize(io::Cursor::new(input))
+        let mut state_machine = Tokenizer::from(io::Cursor::new(input))?;
+        state_machine.tokenize()
     }
 
     mod basic_tokenization {
@@ -221,6 +303,10 @@ mod tests {
             assert_eq!(
                 parse("command arg1 \'quoted arg\' arg2 \'another quoted\'\n").unwrap(),
                 vec!["command", "arg1", "quoted arg", "arg2", "another quoted"]
+            );
+            assert_eq!(
+                parse("echo \'world     shell\' \'script\'\'test\' example\'\'hello").unwrap(),
+                vec!["echo", "world     shell", "scripttest", "examplehello"]
             );
         }
 
@@ -372,7 +458,7 @@ mod tests {
         #[test]
         fn io_read_error_returns_unexpected_eof() {
             let reader = ErrReader;
-            let err = tokenize(reader).unwrap_err();
+            let err = Tokenizer::from(reader).unwrap_err();
             assert!(matches!(err, RushError::UnexpectedEOF));
         }
     }
